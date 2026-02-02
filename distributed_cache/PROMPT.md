@@ -13,6 +13,7 @@ Generate a *distributed cache* in golang, with images being deployed onto kubern
 Use redis as the backend for this cache, implement an api for users.
 1. GET KEY, eg curl http://localhost:80/<key>
 2. SET KEY, eg curl -X POST http://localhost:80/<key> -d <value>
+   alternatively, -d {"data": {}, "expiriy_sec": 60 }
 3. DELETE KEY, eg curl -X DELETE http://localhost:80/<key>
 
 ** Suggested folder structure **
@@ -21,3 +22,16 @@ Use redis as the backend for this cache, implement an api for users.
   - api.go 
 - test
 - deploy (contains deployment scripts and kubernetes resources)
+
+** High Level Design Requirements **
+1. Cache should be highly available and fault tolerant
+Use redis cluster api's replication to setup master-replicas: https://redis.io/docs/latest/operate/oss_and_stack/management/replication/
+
+2. Cache must be scalable
+Horizontal scaling using redis cluster: https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/
+
+3. Key distribution should be even
+
+4. 'hot-keys' should be explicitly handled, using read-replicas.
+
+5. Cache should be performant
