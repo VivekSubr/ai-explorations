@@ -1,0 +1,269 @@
+openapi: 3.0.0
+info:
+  title: Twitter Read API
+  version: 1.0.0
+  description: API for reading user and tweet data
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+components:
+  schemas:
+    UserProfile:
+      type: object
+      properties:
+        name:
+          type: string
+        bio:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - name
+        - bio
+        - created_at
+    UserName:
+      type: object
+      properties:
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - name
+        - created_at
+    UserBio:
+      type: object
+      properties:
+        bio:
+          type: string
+      required:
+        - bio
+    Tweet:
+      type: object
+      properties:
+        tweet:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+      required:
+        - tweet
+        - timestamp
+    FollowedUser:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - name
+
+paths:
+  /user:
+    get:
+      summary: Get user information
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '404':
+          description: User not found
+
+  /user/name:
+    get:
+      summary: Get user name and creation date
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserName'
+        '404':
+          description: User not found
+
+  /user/bio:
+    get:
+      summary: Get user bio
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBio'
+        '404':
+          description: User not found
+
+  /tweet:
+    get:
+      summary: Get user tweets
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+        - name: till
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Timestamp threshold - retrieve tweets older than this timestamp. If not provided, returns latest 500 tweets
+      responses:
+        '200':
+          description: Success - tweets retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tweet'
+        '203':
+          description: Data truncated - partial results returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tweet'
+        '204':
+          description: No content - no tweets found
+        '404':
+          description: User not found
+
+  /user/followed:
+    get:
+      summary: Get accounts followed by user
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FollowedUser'
+        '204':
+          description: No content - user follows no accounts
+        '404':
+          description: User not found
+
+  /timeline:
+    get:
+      summary: Get timeline from followed users
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+        - name: tweets
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 200
+          description: Maximum number of tweets to return (default 200)
+      responses:
+        '200':
+          description: Success - timeline retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tweet'
+        '203':
+          description: Data truncated - partial results returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tweet'
+        '204':
+          description: No content - no timeline tweets found
+        '404':
+          description: User not found
+
+  /home:
+    get:
+      summary: Get tweets posted by user
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+        - name: tweets
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 200
+          description: Maximum number of tweets to return (default 200)
+      responses:
+        '200':
+          description: Success - user tweets retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tweet'
+        '203':
+          description: Data truncated - partial results returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tweet'
+        '204':
+          description: No content - no user tweets found
+        '404':
+          description: User not found

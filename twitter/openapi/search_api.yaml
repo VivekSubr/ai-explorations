@@ -1,0 +1,75 @@
+openapi: 3.0.0
+info:
+  title: Twitter Search API
+  version: 1.0.0
+  description: API for searching users and tweets
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+paths:
+  /search/user:
+    get:
+      summary: Search for a user by ID
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID to search for
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                    description: URL to user profile
+                required:
+                  - url
+        '404':
+          description: User not found
+
+  /search/tweet:
+    get:
+      summary: Search for tweets by phrase
+      parameters:
+        - name: search-phrase
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search phrase to find tweets
+      responses:
+        '200':
+          description: Tweets found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      type: string
+                    tweet_id:
+                      type: string
+                    created_at:
+                      type: string
+                      format: date-time
+                  required:
+                    - user_id
+                    - tweet_id
+                    - created_at
+        '404':
+          description: No tweets found
+          content:
+            application/json:
+              schema:
+                type: 'null'

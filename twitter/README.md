@@ -1,0 +1,1 @@
+This project creates a comprehensive specification for a twitter clone, and includes an mcp-server so that LLM is able to generate a twitter clone as per this spec.

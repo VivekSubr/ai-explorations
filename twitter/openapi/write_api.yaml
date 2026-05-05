@@ -1,0 +1,166 @@
+openapi: 3.0.0
+info:
+  title: Twitter Write API
+  version: 1.0.0
+  description: API for writing/updating user and tweet data
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+paths:
+  /user:
+    put:
+      summary: Create or update a user
+      description: Creates a new user (200) or updates an existing one (201). Returns 400 if forbidden.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                bio:
+                  type: string
+              required:
+                - name
+                - bio
+      responses:
+        '200':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                required:
+                  - user_id
+        '201':
+          description: Existing user updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                required:
+                  - user_id
+        '400':
+          description: User forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: 'null'
+
+  /user/profile-pic:
+    post:
+      summary: Update user profile picture
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/*:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Profile picture updated successfully
+        '400':
+          description: Update forbidden
+        '404':
+          description: User not found
+
+  /user/bio:
+    post:
+      summary: Update user bio
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '201':
+          description: Bio updated successfully
+        '400':
+          description: Update forbidden
+        '404':
+          description: User not found
+
+  /tweet:
+    post:
+      summary: Post a new tweet
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '201':
+          description: Tweet posted successfully
+        '400':
+          description: Post forbidden
+        '404':
+          description: User not found
+
+  /user/follow:
+    post:
+      summary: Follow other users
+      description: Adds the given list of user IDs to the followee list of the user identified by the `id` query parameter.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: ID of the user performing the follow action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+              description: Array of user IDs to follow
+      responses:
+        '200':
+          description: Follow relationships created successfully
