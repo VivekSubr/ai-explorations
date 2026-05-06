@@ -6,17 +6,17 @@
 * USER can search for TWEETs using keywords.
 
 ## Constraints and Assumptions
-* **General**
-** Traffic is not evenly distributed.
-** Posting a tweet should be fast - fan out of tweets must be fast, even if user has millions of followers.
+**General**
+* Traffic is not evenly distributed.
+* Posting a tweet should be fast - fan out of tweets must be fast, even if user has millions of followers.
 
-* **Timeline**
-** Viewing timeline must be fast.
-** Twitter is read heavy, optimize for reads.
+**Timeline**
+* Viewing timeline must be fast.
+*  Twitter is read heavy, optimize for reads.
 
-* **Search**
-** Must be fast
-** Again, read optimize.
+  **Search**
+  * Must be fast
+  * Again, read optimize.
 
 ## Components
 * **Client** 
