@@ -25,11 +25,14 @@
 * **Backend** Web server.
     Backend has three distinct swagger apis defined -> **Read**, **Write** and **Search**
 
+
 **Services** - logical units which have responsibility for certain work flows.
+---
 * **Timeline Service** : Responsible for sending Timeline to UI, for both user's home and other accounts.
 * **Fan Out Service**  : Main user of the write api, responsible for writting new tweets to cache/DB, in such a way that they fan out fast.
 * **Search Service** : Responsible for responding to search queries using search api
 * **Notification Service** : Sends out notifications of popular posts by accounts followed by user.
+---
 
 * **Cache**
     An in-memory cache to support fast read and fan out requirements.
