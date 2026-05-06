@@ -9,4 +9,4 @@ test-mcp:
 	cd $(MCP_DIR) && go test -v ./...
 
 clean:
-	rm -fr frontend backend database test utils UI_UX.md *.svg
+	rm -fr frontend backend database test utils observability UI_UX.md *.svg
