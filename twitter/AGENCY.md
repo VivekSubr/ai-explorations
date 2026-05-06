@@ -56,31 +56,31 @@ This document provides sample calculations for scaling considerations and sugges
 ## Generation
 For generating this project, do the following, in this order : 
 
-1. Read HLL.md, understand the high level design, generate a diagram for this, HLL.svg
+1. **Read** HLL.md, understand the high level design, generate a diagram for this, HLL.svg
 
-2. Read HLD.md and FRONTEND.md and generate a UX_UI model, UI_UX.md
+2. **Read** HLD.md and FRONTEND.md and generate a UX_UI model, UI_UX.md
 
 3. Spin up four sub-agents
-   2.1. Backend Agent - read BACKEND.md, OBSERVABILITY.md and SCALE.md (sections relevate to services in BACKEND.md) create backend folder and generate code in golang according to the documents. Add unit tests for all functionality, have a Makefile with go build, go clean and go test targets.
+   2.1. **Backend Agent** - read BACKEND.md, OBSERVABILITY.md and SCALE.md (sections relevate to services in BACKEND.md) create backend folder and generate code in golang according to the documents. Add unit tests for all functionality, have a Makefile with go build, go clean and go test targets.
 
-   2.2. Database Agent - read DATABASE.md, OBSERVABILITY.md and SCALE.md (sections relevant to redis and postgres), create database folder and generate resources to bring up cache and database services. 
+   2.2. **Database Agent** - read DATABASE.md, OBSERVABILITY.md and SCALE.md (sections relevant to redis and postgres), create database folder and generate resources to bring up cache and database services. 
 
-   2.3. UI Agent - read UX_UI.md and FRONTEND.md, create frontend folder and generate frontend using react.
+   2.3. **UI Agent** - read UX_UI.md and FRONTEND.md, create frontend folder and generate frontend using react.
 
-   2.4 Observability Agent - read OBSERVABILITY.md, create observability folder and generate resources for observability
+   2.4 **Observability Agent** - read OBSERVABILITY.md, create observability folder and generate resources for observability
 
 4. Wait for the sub agents in step 3 to complete.
 
-5. Critique step. Sub up four sub-agents to scan though the generated code and critique it.
-   5.1. Backend Review Agent - read BACKEND.md, OBSERVABILITY.md and SCALE.md, and review whether code in backend, util folder conforms to it... if not, edit and justify why.
+5. **Critique step**. Sub up four sub-agents to scan though the generated code and critique it.
+   5.1. **Backend Review Agent** - read BACKEND.md, OBSERVABILITY.md and SCALE.md, and review whether code in backend, util folder conforms to it... if not, edit and justify why.
 
-   5.2. Database Review Agent - read DATABASE.md, OBSERVABILITY.md and SCALE.md, and review whether code in database folder conforms to it... if not, edit and justify why.
+   5.2. **Database Review Agent** - read DATABASE.md, OBSERVABILITY.md and SCALE.md, and review whether code in database folder conforms to it... if not, edit and justify why.
 
-   5.3. UI Review Agent -  read UX_UI.md and FRONTEND.md, and review whether code in frontend folder conforms to it... if not, edit and justify why.
+   5.3. **UI Review Agent** -  read UX_UI.md and FRONTEND.md, and review whether code in frontend folder conforms to it... if not, edit and justify why.
 
-   5.4. Observability Review Agent - read OBSERVABILITY.md and review whether code in observability folder conforms to it... if not, edit and justify why.
+   5.4. **Observability Review Agent** - read OBSERVABILITY.md and review whether code in observability folder conforms to it... if not, edit and justify why.
 
-6. Wait for sub-agent in step 5 to complete, then test code as per TEST_PLAN.md
+6. Wait for sub-agent in step 5 to complete, then **test** code as per TEST_PLAN.md
 
 7. Review test results, fix code as per any failures and re-test
 
