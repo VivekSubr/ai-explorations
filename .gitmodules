@@ -1,0 +1,4 @@
+[submodule "distributed_cache/third_party/openssl"]
+	path = distributed_cache/third_party/openssl
+	url = https://github.com/openssl/openssl.git
+	branch = openssl-3.5

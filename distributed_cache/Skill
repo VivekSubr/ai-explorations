@@ -1,0 +1,5 @@
+name: generate-distributed-cache
+description: >
+  Use this skill when the user wants to generate a distributed cache system using Kubernetes.
+version: 1.0.0
+location: ~/SKILL.md

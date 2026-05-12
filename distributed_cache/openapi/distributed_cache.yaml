@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: Distributed Cache API
+  description: |
+    HTTP API for the distributed cache. Supports key-value operations as well
+    as JSON document operations addressable via JSONPath expressions.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:80
+    description: Local cache instance
+
+tags:
+  - name: kv
+    description: Key-Value operations
+  - name: json
+    description: JSON document operations via JSONPath
+
+paths:
+  /json:
+    get:
+      tags: [json]
+      summary: Get a JSON value at the given JSONPath
+      description: |
+        Returns the JSON sub-document located at the supplied JSONPath
+        expression. The JSONPath is supplied as the raw query string,
+        e.g. `GET /json?$.user.name`.
+      parameters:
+        - $ref: '#/components/parameters/JsonPathQuery'
+      responses:
+        '200':
+          description: JSON value at the specified path
+          content:
+            application/json:
+              schema:
+                description: Arbitrary JSON value (object, array, string, number, boolean, or null)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [json]
+      summary: Set a JSON value at the given JSONPath
+      description: |
+        Sets the JSON value at the supplied JSONPath. The JSONPath is supplied
+        as the raw query string, e.g. `POST /json?$.user.name`.
+
+        The request body may be either a raw JSON value, or a wrapped object
+        with `data` and optional `expiry_sec`. `expiry_sec` may only be set
+        when the JSONPath points to the document root (`$`).
+      parameters:
+        - $ref: '#/components/parameters/JsonPathQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/JsonValue'
+                - $ref: '#/components/schemas/WrappedJsonValue'
+            examples:
+              raw:
+                summary: Raw JSON value
+                value: { "name": "alice", "age": 30 }
+              wrapped:
+                summary: Wrapped value with expiry (root path only)
+                value: { "data": { "name": "alice" }, "expiry_sec": 60 }
+      responses:
+        '200':
+          description: Value successfully set
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [json]
+      summary: Delete the JSON value at the given JSONPath
+      parameters:
+        - $ref: '#/components/parameters/JsonPathQuery'
+      responses:
+        '204':
+          description: Value successfully deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /{key}:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    get:
+      tags: [kv]
+      summary: Get the value for a key
+      responses:
+        '200':
+          description: Value for the given key
+          content:
+            text/plain:
+              schema:
+                type: string
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonValue'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [kv]
+      summary: Set the value for a key
+      description: |
+        Sets the value for `{key}`. The body may be a raw value (any bytes /
+        JSON), or a wrapped object containing `data` and optional `expiry_sec`
+        to control TTL.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+            example: hello world
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/JsonValue'
+                - $ref: '#/components/schemas/WrappedJsonValue'
+            examples:
+              raw:
+                summary: Raw value
+                value: "hello world"
+              wrapped:
+                summary: Wrapped value with expiry
+                value: { "data": { "foo": "bar" }, "expiry_sec": 60 }
+      responses:
+        '200':
+          description: Value successfully set
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    delete:
+      tags: [kv]
+      summary: Delete a key
+      responses:
+        '204':
+          description: Key successfully deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    Key:
+      name: key
+      in: path
+      required: true
+      description: Cache key. Must not be the reserved path segment `json`.
+      schema:
+        type: string
+        minLength: 1
+    JsonPathQuery:
+      name: jsonpath
+      in: query
+      required: true
+      description: |
+        JSONPath expression supplied as the raw query string (e.g.
+        `?$.user.name`). Use `$` to refer to the document root.
+      schema:
+        type: string
+        minLength: 1
+        example: $.user.name
+
+  schemas:
+    JsonValue:
+      description: Arbitrary JSON value (object, array, string, number, boolean, or null).
+      nullable: true
+
+    WrappedJsonValue:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/JsonValue'
+        expiry_sec:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Time-to-live for the entry, in seconds. For JSON path operations,
+            this may only be supplied when the JSONPath points to the root.
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Key or JSONPath not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
