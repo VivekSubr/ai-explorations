@@ -7,7 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Prefer the in-tree OpenSSL 3.5 (third_party/openssl/install/) over the
 # system OpenSSL if it has been built. This avoids the OpenSSL 3.0/3.5
 # version mismatch on Ubuntu where libssl-dev is still 3.0.x.
-set(LOCAL_OPENSSL_ROOT "${CMAKE_SOURCE_DIR}/../../third_party/openssl/install")
+set(THIRD_PARTY_DIR  "${CMAKE_SOURCE_DIR}/../../third_party")
+set(LOCAL_OPENSSL_ROOT "${THIRD_PARTY_DIR}/openssl/install")
+set(LOCAL_NGHTTP3_ROOT "${THIRD_PARTY_DIR}/nghttp3/install")
+set(LOCAL_NGTCP2_ROOT  "${THIRD_PARTY_DIR}/ngtcp2/install")
+
 if(EXISTS "${LOCAL_OPENSSL_ROOT}/include/openssl/ssl.h")
     set(OPENSSL_ROOT_DIR "${LOCAL_OPENSSL_ROOT}" CACHE PATH "" FORCE)
     set(OPENSSL_USE_STATIC_LIBS FALSE CACHE BOOL "" FORCE)
@@ -17,6 +21,18 @@ if(EXISTS "${LOCAL_OPENSSL_ROOT}/include/openssl/ssl.h")
     list(APPEND CMAKE_INSTALL_RPATH "${LOCAL_OPENSSL_ROOT}/lib")
     message(STATUS "Using local OpenSSL at ${LOCAL_OPENSSL_ROOT}")
 endif()
+
+# Prefer the in-tree ngtcp2 / nghttp3 (built via top-level `make build`).
+# Prepend their pkg-config dirs so the pkg_check_modules() calls below find
+# the local copies (which were linked against the local OpenSSL 3.5).
+foreach(_root IN ITEMS "${LOCAL_NGTCP2_ROOT}" "${LOCAL_NGHTTP3_ROOT}")
+    if(EXISTS "${_root}/lib/pkgconfig")
+        set(ENV{PKG_CONFIG_PATH} "${_root}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+        list(APPEND CMAKE_BUILD_RPATH "${_root}/lib")
+        list(APPEND CMAKE_INSTALL_RPATH "${_root}/lib")
+        message(STATUS "Using local library at ${_root}")
+    endif()
+endforeach()
 
 # Setup testing
 enable_testing()
@@ -48,7 +64,30 @@ pkg_check_modules(NGTCP2          REQUIRED IMPORTED_TARGET libngtcp2)
 pkg_check_modules(NGTCP2_CRYPTO   REQUIRED IMPORTED_TARGET libngtcp2_crypto_ossl)
 pkg_check_modules(NGHTTP3         REQUIRED IMPORTED_TARGET libnghttp3)
 
-add_executable(dist_cache.exe main.cc server.cc)
+# nlohmann::json (header-only).
+find_package(nlohmann_json 3.10 REQUIRED)
+
+# OpenAPI-generated data model classes. Compiled in so that spec changes
+# (run via `make generate`) propagate as compile errors into rest.cc.
+set(GEN_MODEL_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/generated/cpp-pistache-server/model")
+set(GEN_MODEL_SOURCES
+    "${GEN_MODEL_DIR}/Error.cpp"
+    "${GEN_MODEL_DIR}/ErrorCode.cpp"
+    "${GEN_MODEL_DIR}/WrappedJsonValue.cpp")
+
+# operations.h: spec-derived OpId enum and dispatch manifest emitted by
+# openapi/gen-operations.py. Adding/removing an operation in the YAML
+# breaks the exhaustive switch in rest.cc, hence -Werror=switch below.
+set(GEN_OPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+
+# Treat non-exhaustive switch over the generated OpId as a hard error so
+# spec drift fails the build.
+set(REST_DIAGS -Wall -Wextra -Wswitch-enum -Werror=switch -Werror=switch-enum)
+
+add_executable(dist_cache.exe main.cc server.cc rest.cc redis_client.cc ${GEN_MODEL_SOURCES})
+target_include_directories(dist_cache.exe PRIVATE ${GEN_MODEL_DIR} ${GEN_OPS_DIR})
+target_compile_options(dist_cache.exe PRIVATE ${REST_DIAGS})
 target_link_libraries(dist_cache.exe
     PRIVATE
         hiredis::hiredis
@@ -57,9 +96,12 @@ target_link_libraries(dist_cache.exe
         PkgConfig::NGHTTP3
         OpenSSL::SSL
         OpenSSL::Crypto
-        Threads::Threads)
+        Threads::Threads
+        nlohmann_json::nlohmann_json)
 
-add_executable(server_test server_test.cc)
+add_executable(server_test server_test.cc rest.cc ${GEN_MODEL_SOURCES})
+target_include_directories(server_test PRIVATE ${GEN_MODEL_DIR} ${GEN_OPS_DIR})
+target_compile_options(server_test PRIVATE ${REST_DIAGS})
 target_link_libraries(server_test
     PRIVATE
         hiredis::hiredis
@@ -69,8 +111,19 @@ target_link_libraries(server_test
         OpenSSL::SSL
         OpenSSL::Crypto
         Threads::Threads
+        nlohmann_json::nlohmann_json
         GTest::gtest
         GTest::gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(server_test)
+
+add_executable(rest_test rest_test.cc rest.cc ${GEN_MODEL_SOURCES})
+target_include_directories(rest_test PRIVATE ${GEN_MODEL_DIR} ${GEN_OPS_DIR})
+target_compile_options(rest_test PRIVATE ${REST_DIAGS})
+target_link_libraries(rest_test
+    PRIVATE
+        nlohmann_json::nlohmann_json
+        GTest::gtest
+        GTest::gtest_main)
+gtest_discover_tests(rest_test)

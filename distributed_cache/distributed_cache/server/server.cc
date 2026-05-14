@@ -78,7 +78,7 @@ int h3_stop_sending(nghttp3_conn *, int64_t, uint64_t, void *, void *);
 int h3_reset_stream(nghttp3_conn *, int64_t, uint64_t, void *, void *);
 int h3_deferred_consume(nghttp3_conn *, int64_t, size_t, void *, void *);
 int h3_acked_stream_data(nghttp3_conn *, int64_t, uint64_t, void *, void *);
-int h3_go_away(nghttp3_conn *, int64_t, void *, void *);
+int h3_go_away(nghttp3_conn *, int64_t, void *);
 
 // ---------- ngtcp2 callbacks ----------
 int ng_recv_stream_data(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
@@ -704,7 +704,7 @@ int h3_acked_stream_data(nghttp3_conn *, int64_t, uint64_t, void *, void *) {
 // Fired by nghttp3 when the peer (client) sends an HTTP/3 GOAWAY frame on
 // its control stream. We mark the Connection as draining; once all in-flight
 // streams finish, poll_loop will emit CONNECTION_CLOSE for this connection.
-int h3_go_away(nghttp3_conn *, int64_t id, void *conn_user_data, void *) {
+int h3_go_away(nghttp3_conn *, int64_t id, void *conn_user_data) {
     auto *c = static_cast<Connection *>(conn_user_data);
     std::fprintf(stderr, "h3 GOAWAY from peer: last id=%lld\n",
                  static_cast<long long>(id));
@@ -745,10 +745,8 @@ int Server::setup_socket(const char *host, const char *port) {
 int Server::setup_ssl(const char *cert, const char *key) {
     ssl_ctx_ = SSL_CTX_new(TLS_server_method());
     if (!ssl_ctx_) return -1;
-    if (ngtcp2_crypto_ossl_configure_server_context(ssl_ctx_) != 0) {
-        std::fprintf(stderr, "ngtcp2_crypto_ossl_configure_server_context failed\n");
-        return -1;
-    }
+    // ngtcp2 1.16+: per-context configure helper was removed; configuration
+    // now happens per-session via ngtcp2_crypto_ossl_configure_server_session.
     SSL_CTX_set_min_proto_version(ssl_ctx_, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl_ctx_, TLS1_3_VERSION);
 

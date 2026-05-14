@@ -339,8 +339,7 @@ TEST(GoAway, NghttpCallbackForwardsToOnPeerGoaway) {
     TestConnection c;
     int rv = h3_go_away(/*nghttp3_conn*/ nullptr,
                         /*id*/ 8,
-                        /*conn_user_data*/ &c,
-                        /*stream_user_data*/ nullptr);
+                        /*conn_user_data*/ &c);
     EXPECT_EQ(0, rv);
     EXPECT_TRUE(c.draining());
     EXPECT_EQ(c.peer_goaway_id_, 8);

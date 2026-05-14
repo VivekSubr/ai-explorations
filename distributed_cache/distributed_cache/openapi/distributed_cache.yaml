@@ -189,9 +189,27 @@ components:
       required: [error]
       properties:
         error:
-          type: string
+          $ref: '#/components/schemas/ErrorCode'
         message:
           type: string
+
+    ErrorCode:
+      type: string
+      description: |
+        Stable, machine-readable error identifier. Adding or removing a value
+        here forces a corresponding C++ enum change in `Error.h`, which in
+        turn breaks any call site in rest.cc that returns a stale code.
+      enum:
+        - bad_path
+        - bad_request
+        - bad_json
+        - bad_jsonpath
+        - empty_body
+        - missing_jsonpath
+        - missing_key
+        - validation_failed
+        - method_not_allowed
+        - not_found
 
   responses:
     BadRequest:

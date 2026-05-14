@@ -13,3 +13,8 @@ description: "Use this skill when the user wants to generate a distributed cache
 4. Read and understand the reference implementation in distributed_cache/ directory, summarize the key points and design decisions for the implementation to user.
 
 5. Generate as per the design markdown, with reference implementation under distributed_cache/ folder.
+
+# Reference implementation
+The reference implementation for the distributed cache system can be found in the `distributed_cache/` directory. This implementation includes the necessary code and configuration files to set up a distributed cache system using Kubernetes and Redis. The implementation follows the design decisions outlined in the SYSTEM_DESIGN.md and incorporates the components described in the REDIS.md, REDIS_OPERATOR.md, and SERVER.md documents. The API specifications defined in openapi/distributed_cache.yaml are also implemented in this reference implementation. 
+
+TESTING.md outlines test strategy, how to ensure implementation meets requirements outlined in SYSTEM_DESIGN.md.
