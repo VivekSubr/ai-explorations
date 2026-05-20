@@ -151,3 +151,5 @@ KvApi::keyGet(const utility::string_t& key) {
 
 
 ## What rest.cc actually uses
+Since we use our own server.cc, can't use the generated apis - since they are tied to their own transport.
+

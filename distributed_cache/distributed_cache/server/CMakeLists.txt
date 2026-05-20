@@ -99,7 +99,7 @@ target_link_libraries(dist_cache.exe
         Threads::Threads
         nlohmann_json::nlohmann_json)
 
-add_executable(server_test server_test.cc rest.cc ${GEN_MODEL_SOURCES})
+add_executable(server_test server_test.cc rest.cc redis_client.cc ${GEN_MODEL_SOURCES})
 target_include_directories(server_test PRIVATE ${GEN_MODEL_DIR} ${GEN_OPS_DIR})
 target_compile_options(server_test PRIVATE ${REST_DIAGS})
 target_link_libraries(server_test
@@ -127,3 +127,37 @@ target_link_libraries(rest_test
         GTest::gtest
         GTest::gtest_main)
 gtest_discover_tests(rest_test)
+
+# Integration tests for the hiredis wrapper. Talks to a live redis-server on
+# REDIS_HOST:REDIS_PORT (defaults 127.0.0.1:6379). CTest fixtures below bring
+# a redis-server up on demand (and tear it down after) if one isn't already
+# running, so `ctest` works standalone without external orchestration.
+add_executable(redis_client_test redis_client_test.cc redis_client.cc)
+target_link_libraries(redis_client_test
+    PRIVATE
+        hiredis::hiredis
+        nlohmann_json::nlohmann_json
+        GTest::gtest
+        GTest::gtest_main)
+gtest_discover_tests(redis_client_test
+    PROPERTIES FIXTURES_REQUIRED Redis)
+
+# Fixture scaffolding for the Redis dependency. Two ctest entries: redis_up
+# (FIXTURES_SETUP) and redis_down (FIXTURES_CLEANUP). Each redis_client_test
+# case declares FIXTURES_REQUIRED=Redis (above), so ctest will:
+#   1. run redis_up before any of them,
+#   2. run them (in any order, possibly in parallel),
+#   3. run redis_down once they're all finished.
+# If redis_up fails, dependent tests are reported as "Not Run".
+set(REDIS_FIXTURE_SH "${CMAKE_CURRENT_SOURCE_DIR}/ctest_redis.sh")
+set(REDIS_FIXTURE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/../redis/redis.conf")
+set(REDIS_FIXTURE_STATE "${CMAKE_CURRENT_BINARY_DIR}/redis_fixture")
+
+add_test(NAME redis_up
+    COMMAND ${REDIS_FIXTURE_SH} up
+            ${REDIS_FIXTURE_STATE} ${REDIS_FIXTURE_CONF})
+set_tests_properties(redis_up PROPERTIES FIXTURES_SETUP Redis)
+
+add_test(NAME redis_down
+    COMMAND ${REDIS_FIXTURE_SH} down ${REDIS_FIXTURE_STATE})
+set_tests_properties(redis_down PROPERTIES FIXTURES_CLEANUP Redis)

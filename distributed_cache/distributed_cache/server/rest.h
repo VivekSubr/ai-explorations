@@ -33,24 +33,31 @@ struct Response {
 
 // In-memory backing store. Caller owns lifetime. Not thread-safe; protect
 // externally if shared across threads.
+//
+// The KV / JSON methods are `virtual` so transport-layer code (e.g. the
+// HTTP/3 server in server.cc) can swap in a different backend -- notably the
+// Redis-backed override used by dist_cache.exe in production -- while
+// rest_test continues to exercise the in-memory implementation here.
 class Store {
 public:
     using Clock = std::chrono::steady_clock;
 
+    virtual ~Store() = default;
+
     // KV ------------------------------------------------------------------
-    void kv_set(const std::string& key, std::string value,
-                std::optional<int64_t> expiry_sec = std::nullopt);
-    std::optional<std::string> kv_get(const std::string& key);
-    bool kv_delete(const std::string& key);
+    virtual void kv_set(const std::string& key, std::string value,
+                        std::optional<int64_t> expiry_sec = std::nullopt);
+    virtual std::optional<std::string> kv_get(const std::string& key);
+    virtual bool kv_delete(const std::string& key);
 
     // JSON ----------------------------------------------------------------
     // Returns the value at `path` (or std::nullopt if absent).
-    std::optional<nlohmann::json> json_get(const std::string& path) const;
+    virtual std::optional<nlohmann::json> json_get(const std::string& path) const;
     // Returns false if `path` cannot be created (e.g. parent missing).
     // `expiry_sec` is only honored when `path` is the root ("$").
-    bool json_set(const std::string& path, nlohmann::json value,
-                  std::optional<int64_t> expiry_sec = std::nullopt);
-    bool json_delete(const std::string& path);
+    virtual bool json_set(const std::string& path, nlohmann::json value,
+                          std::optional<int64_t> expiry_sec = std::nullopt);
+    virtual bool json_delete(const std::string& path);
 
     // Test hook: force-expire entries whose TTL has lapsed. Normally called
     // implicitly by kv_get / json_get.

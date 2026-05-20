@@ -2,8 +2,8 @@ OPENAPI_DIR  := $(abspath $(CURDIR)/../openapi)
 REPO_ROOT    := $(abspath $(CURDIR)/..)
 GENERATOR    ?= cpp-pistache-server
 
-cmake: deps clean generate
-	mkdir -p build && cd build && cmake  -DCMAKE_BUILD_TYPE=Debug ..
+build: deps generate
+	mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Debug .. && cmake --build . -j
 
 # Ensure third_party libs (openssl 3.5, nghttp3, ngtcp2) are built. Delegates
 # to the top-level Makefile so the recipe lives in one place.
@@ -27,4 +27,4 @@ generate:
 	mkdir -p generated
 	$(OPENAPI_DIR)/gen-operations.py --out generated/operations.h
 
-.PHONY: cmake clean test debug generate deps
+.PHONY: build clean test debug generate deps

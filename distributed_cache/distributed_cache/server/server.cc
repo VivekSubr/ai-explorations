@@ -9,6 +9,9 @@
 
 #include "server.h"
 
+#include "redis_client.h"
+#include "rest.h"
+
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
 #include <ngtcp2/ngtcp2_crypto_ossl.h>
@@ -92,11 +95,77 @@ int ng_handshake_completed(ngtcp2_conn *, void *);
 int ng_stream_stop_sending(ngtcp2_conn *, int64_t, uint64_t, void *, void *);
 int ng_stream_reset(ngtcp2_conn *, int64_t, uint64_t, uint64_t, void *, void *);
 
-// ---------- Per-stream response buffer ----------
+// ---------- Per-stream request/response buffer ----------
 struct StreamCtx {
     int64_t stream_id;
-    std::string body;       // response body
-    size_t offset = 0;      // bytes already handed to nghttp3
+    // Request side, populated by h3 callbacks before on_stream_end fires.
+    std::string method;     // captured from :method pseudo-header
+    std::string path;       // captured from :path  pseudo-header
+    std::string req_body;   // accumulated from h3_recv_data
+
+    // Response side, populated by submit_response.
+    std::string resp_status;  // e.g. "200" (stable storage for nghttp3_nv)
+    std::string resp_ctype;   // e.g. "application/json" (empty => omit header)
+    std::string body;         // response body
+    size_t offset = 0;        // bytes already handed to nghttp3
+};
+
+// ---------- Redis-backed rest::Store --------------------------------------
+//
+// Adapter that satisfies the transport-agnostic rest::Store interface by
+// delegating every op to a hiredis client. Used by the HTTP/3 server below;
+// rest_test keeps using the in-memory base class.
+//
+// All JSON ops share a single Redis key so the spec's "single root JSON
+// document" semantics are preserved. Path arguments ("$", "$.user.age", ...)
+// flow straight to Redis 8's native JSON commands, which understand them.
+class RedisStore : public dist_cache::rest::Store {
+public:
+    explicit RedisStore(dist_cache::redis::Client *client) : client_(client) {}
+
+    void kv_set(const std::string &key, std::string value,
+                std::optional<int64_t> expiry_sec) override {
+        client_->kv_set(key, value, expiry_sec);
+    }
+    std::optional<std::string> kv_get(const std::string &key) override {
+        return client_->kv_get(key);
+    }
+    bool kv_delete(const std::string &key) override {
+        return client_->kv_delete(key);
+    }
+
+    std::optional<nlohmann::json> json_get(const std::string &path) const override {
+        try {
+            auto v = client_->json_get(kJsonKey, path);
+            if (!v) return std::nullopt;
+            // JSON.GET on a non-existent path returns an empty array; treat
+            // that as "not found" so the REST layer can emit 404.
+            if (v->is_array() && v->empty()) return std::nullopt;
+            return v;
+        } catch (const dist_cache::redis::RedisError &) {
+            return std::nullopt;
+        }
+    }
+    bool json_set(const std::string &path, nlohmann::json value,
+                  std::optional<int64_t> expiry_sec) override {
+        // Spec: expiry_sec only allowed at root. Matches the in-memory rule.
+        if (expiry_sec && path != "$") return false;
+        try {
+            client_->json_set(kJsonKey, path, value, expiry_sec);
+            return true;
+        } catch (const dist_cache::redis::RedisError &) {
+            // Most commonly: parent path missing on a sub-path SET.
+            return false;
+        }
+    }
+    bool json_delete(const std::string &path) override {
+        try { return client_->json_delete(kJsonKey, path); }
+        catch (const dist_cache::redis::RedisError &) { return false; }
+    }
+
+private:
+    static constexpr const char *kJsonKey = "dc:json";
+    dist_cache::redis::Client *client_;
 };
 
 // ---------- Connection ----------
@@ -186,6 +255,10 @@ public:
 
     int run(const char *host, const char *port, const char *cert, const char *key);
 
+    // REST router store, populated by run() once the redis connection is up.
+    // Connections call this from submit_response() to dispatch requests.
+    dist_cache::rest::Store *store() { return store_.get(); }
+
 protected:
     int setup_socket(const char *host, const char *port);
     int setup_ssl(const char *cert, const char *key);
@@ -201,6 +274,11 @@ protected:
     socklen_t local_addrlen_ = 0;
     // Map DCID bytes -> Connection. Real impl needs multi-CID tracking.
     std::map<std::string, std::unique_ptr<Connection>> conns_;
+
+    // Backing storage. Owned by Server so its lifetime spans every Connection
+    // and every in-flight stream. Both are null until run() initializes them.
+    std::unique_ptr<dist_cache::redis::Client> redis_;
+    std::unique_ptr<dist_cache::rest::Store>   store_;
 };
 
 // ngtcp2 needs an SSL* lookup from a conn ref
@@ -512,8 +590,12 @@ int Connection::write_connection_close(int fd) {
     return 0;
 }
 
-int Connection::on_stream_data(int64_t stream_id, std::string_view) {
-    return 0;  // ignore request body for now
+int Connection::on_stream_data(int64_t stream_id, std::string_view data) {
+    // Accumulate the request body so submit_response can hand it to the REST
+    // router once the peer signals end-of-stream.
+    auto &s = ensure_stream(stream_id);
+    s.req_body.append(data);
+    return 0;
 }
 
 int Connection::on_stream_end(int64_t stream_id) {
@@ -523,13 +605,22 @@ int Connection::on_stream_end(int64_t stream_id) {
 int Connection::submit_response(int64_t stream_id) {
     auto &s = ensure_stream(stream_id);
     s.stream_id = stream_id;
-    s.body = "Hello, HTTP/3!\n";
 
-    
-    /* 
-        associate stream_id from this stream context, 
-        so that when read_data callback is called with this stream_id, we can get the response body and 
-        offset from the stream context
+    // Route through the OpenAPI-spec REST handler. The store backing this
+    // call is Redis when running under dist_cache.exe (see Server::run).
+    auto resp = dist_cache::rest::handle(
+        *server_->store(), s.method, s.path, s.req_body);
+
+    // Stable storage for header values referenced by the data reader below.
+    s.resp_status = std::to_string(resp.status);
+    s.resp_ctype  = std::move(resp.content_type);
+    s.body        = std::move(resp.body);
+    s.offset      = 0;
+
+    /*
+        associate stream_id from this stream context,
+        so that when read_data callback is called with this stream_id, we can
+        get the response body and offset from the stream context
     */
     nghttp3_conn_set_stream_user_data(h3_, stream_id, &s);
 
@@ -542,11 +633,19 @@ int Connection::submit_response(int64_t stream_id) {
             uint8_t flags;    // Configuration flags
         } nghttp3_nv;
     */
-    nghttp3_nv nva[] = { //array of nghttp3 name-value pairs for response headers
-        {(uint8_t *)":status", (uint8_t *)"200", 7, 3, NGHTTP3_NV_FLAG_NONE},
-        {(uint8_t *)"server", (uint8_t *)"dist_cache/0.1", 6, 14, NGHTTP3_NV_FLAG_NONE},
-        {(uint8_t *)"content-type", (uint8_t *)"text/plain", 12, 10, NGHTTP3_NV_FLAG_NONE},
-    };
+    std::vector<nghttp3_nv> nva;
+    nva.reserve(3);
+    nva.push_back({(uint8_t *)":status",
+                   (uint8_t *)s.resp_status.data(),
+                   7, s.resp_status.size(), NGHTTP3_NV_FLAG_NONE});
+    nva.push_back({(uint8_t *)"server",
+                   (uint8_t *)"dist_cache/0.1",
+                   6, 14, NGHTTP3_NV_FLAG_NONE});
+    if (!s.resp_ctype.empty()) {
+        nva.push_back({(uint8_t *)"content-type",
+                       (uint8_t *)s.resp_ctype.data(),
+                       12, s.resp_ctype.size(), NGHTTP3_NV_FLAG_NONE});
+    }
 
     /*
         Because nghttp3 is designed to be extremely memory-efficient, it doesn't copy the entire payload 
@@ -575,8 +674,8 @@ int Connection::submit_response(int64_t stream_id) {
     };
 
     //call initiates response from server, read_data called from stream_id
-    int rv = nghttp3_conn_submit_response(h3_, stream_id, nva,
-                                          sizeof(nva) / sizeof(nva[0]), &dr);
+    int rv = nghttp3_conn_submit_response(h3_, stream_id, nva.data(),
+                                          nva.size(), &dr);
     if (rv != 0) {
         std::fprintf(stderr, "submit_response: %s\n", nghttp3_strerror(rv));
 
@@ -657,8 +756,22 @@ int ng_stream_reset(ngtcp2_conn *, int64_t stream_id, uint64_t, uint64_t,
 }
 
 // ---------- nghttp3 callbacks impl ----------
-int h3_recv_header(nghttp3_conn *, int64_t, int32_t, nghttp3_rcbuf *,
-                   nghttp3_rcbuf *, uint8_t, void *, void *) { return 0; }
+int h3_recv_header(nghttp3_conn *, int64_t stream_id, int32_t,
+                   nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t,
+                   void *conn_user_data, void *) {
+    // Capture the request pseudo-headers (:method, :path) into the per-stream
+    // context so submit_response can hand them to the REST router. Everything
+    // else is dropped on the floor (we don't honor request content-type, etc).
+    auto *c = static_cast<Connection *>(conn_user_data);
+    auto nbuf = nghttp3_rcbuf_get_buf(name);
+    auto vbuf = nghttp3_rcbuf_get_buf(value);
+    std::string_view n(reinterpret_cast<const char *>(nbuf.base), nbuf.len);
+    std::string_view v(reinterpret_cast<const char *>(vbuf.base), vbuf.len);
+    auto &s = c->ensure_stream(stream_id);
+    if (n == ":method") s.method.assign(v);
+    else if (n == ":path") s.path.assign(v);
+    return 0;
+}
 
 int h3_end_headers(nghttp3_conn *, int64_t, int, void *, void *) { return 0; }
 
@@ -898,9 +1011,24 @@ int Server::run(const char *host, const char *port, const char *cert,
         std::fprintf(stderr, "ngtcp2_crypto_ossl_init failed\n");
         return 1;
     }
+    // Connect to Redis. Host/port overridable via env so the test harness
+    // (dist_cache_test.sh) can point at the redis-server it spins up.
+    const char *rhost = std::getenv("DC_REDIS_HOST");
+    const char *rport = std::getenv("DC_REDIS_PORT");
+    int rport_n = rport ? std::atoi(rport) : 6379;
+    try {
+        redis_ = std::make_unique<dist_cache::redis::Client>(
+            rhost ? rhost : "127.0.0.1", rport_n);
+    } catch (const dist_cache::redis::RedisError &e) {
+        std::fprintf(stderr, "redis connect failed: %s\n", e.what());
+        return 1;
+    }
+    store_ = std::make_unique<RedisStore>(redis_.get());
+
     if (setup_socket(host, port) != 0) return 1;
     if (setup_ssl(cert, key) != 0) return 1;
-    std::printf("HTTP/3 server listening on %s:%s\n", host, port);
+    std::printf("HTTP/3 server listening on %s:%s (redis %s:%d)\n",
+                host, port, rhost ? rhost : "127.0.0.1", rport_n);
     poll_loop();
     return 0;
 }
