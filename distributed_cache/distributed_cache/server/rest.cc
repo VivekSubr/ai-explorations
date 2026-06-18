@@ -262,6 +262,7 @@ Response op_json_get(Store& store, std::string_view jsonpath,
         return error(400, err::kMissingJsonpath,
                      "JSONPath must be supplied as the query string");
     }
+    (void)jsonpath_to_pointer(jsonpath);
     auto v = store.json_get(std::string(jsonpath));
     if (!v) return error(404, err::kNotFound);
     return ok_json(*v);
@@ -273,6 +274,7 @@ Response op_json_post(Store& store, std::string_view jsonpath,
         return error(400, err::kMissingJsonpath,
                      "JSONPath must be supplied as the query string");
     }
+    (void)jsonpath_to_pointer(jsonpath);
     if (body.empty()) return error(400, err::kEmptyBody);
     json parsed = json::parse(body);
     auto pb = unwrap_body(parsed);
@@ -290,6 +292,7 @@ Response op_json_delete(Store& store, std::string_view jsonpath,
         return error(400, err::kMissingJsonpath,
                      "JSONPath must be supplied as the query string");
     }
+    (void)jsonpath_to_pointer(jsonpath);
     if (!store.json_delete(std::string(jsonpath))) {
         return error(404, err::kNotFound);
     }

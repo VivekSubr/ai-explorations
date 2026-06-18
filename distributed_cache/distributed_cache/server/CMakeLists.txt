@@ -99,6 +99,20 @@ target_link_libraries(dist_cache.exe
         Threads::Threads
         nlohmann_json::nlohmann_json)
 
+add_executable(hello.exe hello.cc rest.cc redis_client.cc ${GEN_MODEL_SOURCES})
+target_include_directories(hello.exe PRIVATE ${GEN_MODEL_DIR} ${GEN_OPS_DIR})
+target_compile_options(hello.exe PRIVATE ${REST_DIAGS})
+target_link_libraries(hello.exe
+    PRIVATE
+        hiredis::hiredis
+        PkgConfig::NGTCP2
+        PkgConfig::NGTCP2_CRYPTO
+        PkgConfig::NGHTTP3
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        Threads::Threads
+        nlohmann_json::nlohmann_json)
+
 add_executable(server_test server_test.cc rest.cc redis_client.cc ${GEN_MODEL_SOURCES})
 target_include_directories(server_test PRIVATE ${GEN_MODEL_DIR} ${GEN_OPS_DIR})
 target_compile_options(server_test PRIVATE ${REST_DIAGS})

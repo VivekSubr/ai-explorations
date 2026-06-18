@@ -73,12 +73,20 @@ EOF
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DC_BIN_DEFAULT="$REPO_ROOT/server/build/dist_cache.exe"
 REDIS_CONF_DEFAULT="$REPO_ROOT/redis/redis.conf"
+THIRD_PARTY_CURL_DEFAULT="$REPO_ROOT/../third_party/curl/install/bin/curl"
 
 DC_HOST="${DC_HOST:-127.0.0.1}"
 DC_PORT="${DC_PORT:-4433}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 DC_BIN="${DC_BIN:-$DC_BIN_DEFAULT}"
 REDIS_CONF="${REDIS_CONF:-$REDIS_CONF_DEFAULT}"
+REDIS_JSON_MODULE="${REDIS_JSON_MODULE:-}"
+if [[ -x "$THIRD_PARTY_CURL_DEFAULT" ]]; then
+    CURL="${CURL:-$THIRD_PARTY_CURL_DEFAULT}"
+else
+    CURL="${CURL:-curl}"
+fi
+CURL_BIN=""
 
 DC_PID=""
 REDIS_PID=""
@@ -99,26 +107,79 @@ wait_for_port() {
     return 1
 }
 
-# curl_h3_supported  -> 0 if the local curl can speak HTTP/3, else 1.
+# find_redis_json_module -> echoes a ReJSON module path if one is available.
+# REDIS_JSON_MODULE can override auto-detection.
+find_redis_json_module() {
+    local candidate
+    if [[ -n "$REDIS_JSON_MODULE" ]]; then
+        [[ -f "$REDIS_JSON_MODULE" ]] || {
+            echo "REDIS_JSON_MODULE not found: $REDIS_JSON_MODULE" >&2
+            return 1
+        }
+        echo "$REDIS_JSON_MODULE"
+        return 0
+    fi
+    for candidate in \
+        /usr/lib/redis/modules/rejson.so \
+        /usr/lib/redis/modules/redisjson.so; do
+        [[ -f "$candidate" ]] || continue
+        echo "$candidate"
+        return 0
+    done
+    return 1
+}
+
+redis_json_supported() {
+    command -v redis-cli >/dev/null 2>&1 || return 1
+    redis-cli -h 127.0.0.1 -p "$REDIS_PORT" --raw \
+        COMMAND INFO JSON.GET 2>/dev/null | grep -qx 'json.get'
+}
+
+# resolve_curl  -> resolves $CURL to the binary used for HTTP/3 requests.
+resolve_curl() {
+    if ! CURL_BIN=$(command -v -- "$CURL" 2>/dev/null); then
+        echo "curl binary not found: $CURL" >&2
+        echo "Set CURL to an HTTP/3-capable curl binary, then rerun:" >&2
+        echo "  CURL=/path/to/curl ./dist_cache_test.sh" >&2
+        return 1
+    fi
+    export CURL_BIN
+}
+
+# curl_h3_supported  -> 0 if the configured curl can speak HTTP/3, else 1.
 curl_h3_supported() {
-    command -v curl >/dev/null 2>&1 || return 1
-    curl --version 2>/dev/null | grep -qiE 'Features:.*HTTP3'
+    local curl_bin="${1:-$CURL_BIN}"
+    [[ -n "$curl_bin" ]] || return 1
+    "$curl_bin" --version 2>/dev/null | grep -qiE 'Features:.*HTTP3'
+}
+
+# require_curl_h3  -> validates the configured curl before starting services.
+require_curl_h3() {
+    resolve_curl || return 1
+    if curl_h3_supported "$CURL_BIN"; then
+        return 0
+    fi
+    echo "curl at $CURL_BIN does not have HTTP/3 support." >&2
+    echo "Set CURL to a curl binary whose 'curl -V' output includes HTTP3:" >&2
+    echo "  CURL=/path/to/http3-enabled-curl ./dist_cache_test.sh" >&2
+    return 1
 }
 
 # wait_for_http3 <host> <port> [timeout_sec]
-# Probes <host>:<port> with `curl --http3-only` until it gets ANY HTTP reply
+# Probes <host>:<port> with `$CURL --http3-only` until it gets ANY HTTP reply
 # (success OR error -- both prove the server is up and decoding QUIC).
-# Returns 1 on timeout, 2 if the local curl lacks HTTP/3 support.
+# Returns 1 on timeout, 2 if the configured curl lacks HTTP/3 support.
 wait_for_http3() {
     local host="$1" port="$2" timeout="${3:-5}"
-    curl_h3_supported || return 2
+    [[ -n "$CURL_BIN" ]] || resolve_curl || return 2
+    curl_h3_supported "$CURL_BIN" || return 2
     local url="https://${host}:${port}/__readiness__"
     local deadline=$(( SECONDS + timeout ))
     while (( SECONDS < deadline )); do
         # --http3-only forces QUIC (no Alt-Svc upgrade dance).
         # -k accepts the self-signed cert; --max-time keeps us snappy.
         # Any HTTP status (even 404) means the handler answered.
-        if curl -ksS --http3-only --max-time 1 \
+        if "$CURL_BIN" -ksS --http3-only --max-time 1 \
                 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null \
                 | grep -qE '^[1-5][0-9][0-9]$'; then
             return 0
@@ -129,6 +190,7 @@ wait_for_http3() {
 }
 
 setup() {
+    require_curl_h3 || return 1
     [[ -x "$DC_BIN"      ]] || { echo "dist_cache.exe not built at $DC_BIN (run 'make -C server cmake')" >&2; return 1; }
     [[ -f "$REDIS_CONF"  ]] || { echo "redis conf missing at $REDIS_CONF" >&2; return 1; }
     command -v redis-server >/dev/null 2>&1 \
@@ -140,11 +202,34 @@ setup() {
     # 1. redis-server. --port on the command line overrides anything in the
     # conf file, keeping the test harness self-contained.
     local redis_log="$DC_TMPDIR/redis.log"
-    redis-server "$REDIS_CONF" --port "$REDIS_PORT" --daemonize no \
+    local redis_args=("$REDIS_CONF" --port "$REDIS_PORT" --daemonize no)
+    local redis_json_module=""
+    if redis_json_module=$(find_redis_json_module); then
+        redis_args+=(--loadmodule "$redis_json_module")
+    elif [[ -n "$REDIS_JSON_MODULE" ]]; then
+        return 1
+    fi
+    redis-server "${redis_args[@]}" \
         >"$redis_log" 2>&1 &
     REDIS_PID=$!
     if ! wait_for_port "$REDIS_PORT" 127.0.0.1 5; then
         echo "redis-server failed to listen on $REDIS_PORT; log:" >&2
+        sed 's/^/  /' "$redis_log" >&2
+        return 1
+    fi
+    if ! kill -0 "$REDIS_PID" 2>/dev/null; then
+        echo "redis-server exited during startup; log:" >&2
+        sed 's/^/  /' "$redis_log" >&2
+        return 1
+    fi
+    if ! redis_json_supported; then
+        echo "redis-server on port $REDIS_PORT lacks Redis JSON command support." >&2
+        if [[ -n "$redis_json_module" ]]; then
+            echo "Attempted to load Redis JSON module: $redis_json_module" >&2
+        else
+            echo "Set REDIS_JSON_MODULE=/path/to/rejson.so or use a Redis build with JSON support." >&2
+        fi
+        echo "redis log:" >&2
         sed 's/^/  /' "$redis_log" >&2
         return 1
     fi
@@ -157,14 +242,14 @@ setup() {
     "$DC_BIN" "$DC_HOST" "$DC_PORT" "$DC_CERT" "$DC_KEY" \
         >"$dc_log" 2>&1 &
     DC_PID=$!
-    # Readiness probe: prefer a real HTTP/3 round-trip via curl; fall back to
-    # a process-alive check when the local curl lacks HTTP/3 support (older
-    # distro builds). Either way, fail fast if the binary exited.
+    # Readiness probe: use a real HTTP/3 round-trip via the configured curl.
+    # Fail fast if the server exits or cannot answer the probe.
     local probe_rc=0
     wait_for_http3 "$DC_HOST" "$DC_PORT" 5 || probe_rc=$?
     case $probe_rc in
         0) ;;  # got an HTTP reply -- ready
-        2) sleep 0.3 ;;  # curl has no HTTP/3; best we can do is alive check
+        2) echo "configured curl lost HTTP/3 support before readiness probe" >&2
+           return 1 ;;
         *) echo "dist_cache.exe did not respond on ${DC_HOST}:${DC_PORT}; log:" >&2
            sed 's/^/  /' "$dc_log" >&2
            return 1 ;;
@@ -228,9 +313,10 @@ fail() { echo "  FAIL: $*" >&2; exit 1; }
 skip() { echo "  SKIP: $*" >&2; exit 77; }
 
 # Marker for tests that need an HTTP/3-capable curl. Skips the test cleanly
-# when curl can't reach the server.
+# when the configured curl can't reach the server.
 require_h3() {
-    curl_h3_supported || skip "local curl lacks HTTP/3 support"
+    [[ -n "$CURL_BIN" ]] || resolve_curl || skip "curl binary not found; set CURL=/path/to/http3-enabled-curl"
+    curl_h3_supported "$CURL_BIN" || skip "curl at $CURL_BIN lacks HTTP/3 support; set CURL=/path/to/http3-enabled-curl"
 }
 
 # dc_curl <method> <path> [body] [content_type]
@@ -251,7 +337,7 @@ dc_curl() {
     if [[ -n "$body" ]]; then
         args+=(--data-binary "$body")
     fi
-    curl "${args[@]}" 2>/dev/null
+    "$CURL_BIN" "${args[@]}" 2>/dev/null
 }
 
 # Extract the STATUS=NNN trailer from a dc_curl response.

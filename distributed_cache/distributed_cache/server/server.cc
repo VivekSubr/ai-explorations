@@ -11,6 +11,7 @@
 
 #include "redis_client.h"
 #include "rest.h"
+#include "server_impl.h"
 
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
@@ -47,7 +48,16 @@
 namespace {
 
 constexpr size_t kMaxUdpPayload = 1452;
+constexpr size_t kServerCidLen = NGTCP2_MIN_INITIAL_DCIDLEN;
 constexpr std::string_view kAlpnH3 = "\x02h3";  // length-prefixed wire form
+
+std::string cid_key(const ngtcp2_cid &cid) {
+    return {reinterpret_cast<const char *>(cid.data), cid.datalen};
+}
+
+std::string cid_key(const uint8_t *data, size_t datalen) {
+    return {reinterpret_cast<const char *>(data), datalen};
+}
 
 ngtcp2_tstamp now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -67,223 +77,56 @@ int get_new_cid_cb(ngtcp2_conn *, ngtcp2_cid *cid, uint8_t *token,
     return 0;
 }
 
-// Forward declarations
-class Connection;
-class Server;
-
-// ---------- nghttp3 callbacks ----------
-int h3_recv_header(nghttp3_conn *, int64_t stream_id, int32_t,
-                   nghttp3_rcbuf *, nghttp3_rcbuf *, uint8_t, void *, void *);
-int h3_end_headers(nghttp3_conn *, int64_t stream_id, int, void *, void *);
-int h3_recv_data(nghttp3_conn *, int64_t, const uint8_t *, size_t, void *, void *);
-int h3_end_stream(nghttp3_conn *, int64_t stream_id, void *, void *);
-int h3_stop_sending(nghttp3_conn *, int64_t, uint64_t, void *, void *);
-int h3_reset_stream(nghttp3_conn *, int64_t, uint64_t, void *, void *);
-int h3_deferred_consume(nghttp3_conn *, int64_t, size_t, void *, void *);
-int h3_acked_stream_data(nghttp3_conn *, int64_t, uint64_t, void *, void *);
-int h3_go_away(nghttp3_conn *, int64_t, void *);
-
-// ---------- ngtcp2 callbacks ----------
-int ng_recv_stream_data(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
-                        uint64_t offset, const uint8_t *data, size_t datalen,
-                        void *user_data, void *stream_user_data);
-int ng_acked_stream_data(ngtcp2_conn *, int64_t, uint64_t, uint64_t, void *, void *);
-int ng_stream_open(ngtcp2_conn *, int64_t, void *);
-int ng_stream_close(ngtcp2_conn *, uint32_t, int64_t, uint64_t, void *, void *);
-int ng_extend_max_local_streams_bidi(ngtcp2_conn *, uint64_t, void *);
-int ng_handshake_completed(ngtcp2_conn *, void *);
-int ng_stream_stop_sending(ngtcp2_conn *, int64_t, uint64_t, void *, void *);
-int ng_stream_reset(ngtcp2_conn *, int64_t, uint64_t, uint64_t, void *, void *);
-
-// ---------- Per-stream request/response buffer ----------
-struct StreamCtx {
-    int64_t stream_id;
-    // Request side, populated by h3 callbacks before on_stream_end fires.
-    std::string method;     // captured from :method pseudo-header
-    std::string path;       // captured from :path  pseudo-header
-    std::string req_body;   // accumulated from h3_recv_data
-
-    // Response side, populated by submit_response.
-    std::string resp_status;  // e.g. "200" (stable storage for nghttp3_nv)
-    std::string resp_ctype;   // e.g. "application/json" (empty => omit header)
-    std::string body;         // response body
-    size_t offset = 0;        // bytes already handed to nghttp3
-};
-
-// ---------- Redis-backed rest::Store --------------------------------------
-//
-// Adapter that satisfies the transport-agnostic rest::Store interface by
-// delegating every op to a hiredis client. Used by the HTTP/3 server below;
-// rest_test keeps using the in-memory base class.
-//
-// All JSON ops share a single Redis key so the spec's "single root JSON
-// document" semantics are preserved. Path arguments ("$", "$.user.age", ...)
-// flow straight to Redis 8's native JSON commands, which understand them.
-class RedisStore : public dist_cache::rest::Store {
-public:
-    explicit RedisStore(dist_cache::redis::Client *client) : client_(client) {}
-
-    void kv_set(const std::string &key, std::string value,
-                std::optional<int64_t> expiry_sec) override {
-        client_->kv_set(key, value, expiry_sec);
-    }
-    std::optional<std::string> kv_get(const std::string &key) override {
-        return client_->kv_get(key);
-    }
-    bool kv_delete(const std::string &key) override {
-        return client_->kv_delete(key);
-    }
-
-    std::optional<nlohmann::json> json_get(const std::string &path) const override {
-        try {
-            auto v = client_->json_get(kJsonKey, path);
-            if (!v) return std::nullopt;
-            // JSON.GET on a non-existent path returns an empty array; treat
-            // that as "not found" so the REST layer can emit 404.
-            if (v->is_array() && v->empty()) return std::nullopt;
-            return v;
-        } catch (const dist_cache::redis::RedisError &) {
-            return std::nullopt;
-        }
-    }
-    bool json_set(const std::string &path, nlohmann::json value,
-                  std::optional<int64_t> expiry_sec) override {
-        // Spec: expiry_sec only allowed at root. Matches the in-memory rule.
-        if (expiry_sec && path != "$") return false;
-        try {
-            client_->json_set(kJsonKey, path, value, expiry_sec);
-            return true;
-        } catch (const dist_cache::redis::RedisError &) {
-            // Most commonly: parent path missing on a sub-path SET.
-            return false;
-        }
-    }
-    bool json_delete(const std::string &path) override {
-        try { return client_->json_delete(kJsonKey, path); }
-        catch (const dist_cache::redis::RedisError &) { return false; }
-    }
-
-private:
-    static constexpr const char *kJsonKey = "dc:json";
-    dist_cache::redis::Client *client_;
-};
-
-// ---------- Connection ----------
-class Connection {
-public:
-    //Setups nghttp2 callbacks, and initializes ngtcp2 
-    Connection(Server *server, const ngtcp2_cid &dcid, const ngtcp2_cid &scid,
-               const ngtcp2_cid &ocid, const sockaddr *local, socklen_t local_len,
-               const sockaddr *remote, socklen_t remote_len, uint32_t version,
-               SSL_CTX *ssl_ctx);
-    ~Connection();
-
-    Connection(const Connection &) = delete;
-    Connection &operator=(const Connection &) = delete;
-
-    //reads a single packet using ngtcp2_conn_read_pkt
-    int read_pkt(const sockaddr *remote, socklen_t remote_len,
-                 const uint8_t *data, size_t datalen);
-    
-    //generate stream frame and call sendto()
-    int write_pending(int fd);
-    ngtcp2_tstamp expiry() const { return ngtcp2_conn_get_expiry(conn_); }
-    int handle_expiry();
-    bool closed() const { return closed_; }
-    ngtcp2_conn *conn() { return conn_; }
-    nghttp3_conn *h3() { return h3_; }
-    Server *server() { return server_; }
-
-    // h3 hooks
-    int on_stream_data(int64_t stream_id, std::string_view data);
-    int on_stream_end(int64_t stream_id);
-
-    //
-    int submit_response(int64_t stream_id);
-
-    StreamCtx *stream(int64_t id) {
-        auto it = streams_.find(id);
-        return it == streams_.end() ? nullptr : &it->second;
-    }
-
-    //check if stream with id exists, if not create an empty one and return reference to it
-    StreamCtx &ensure_stream(int64_t id) { return streams_[id]; }
-    void erase_stream(int64_t id) { streams_.erase(id); }
-
-    // Called from the ngtcp2 handshake_completed callback so that h3 control /
-    // qpack streams exist before any request bytes are delivered.
-    int on_handshake_completed();
-
-    // Peer (client) sent an HTTP/3 GOAWAY. Mark the connection as draining;
-    // poll_loop will emit CONNECTION_CLOSE once all in-flight streams finish.
-    void on_peer_goaway(int64_t last_stream_id);
-    bool draining() const { return draining_; }
-    bool idle_for_close() const { return draining_ && streams_.empty(); }
-    int write_connection_close(int fd);
-
-protected:
-    // Test-only default constructor. Leaves all QUIC/TLS handles null so that
-    // entry points which dereference them are not safe to call, but lets unit
-    // tests exercise pure-C++ bookkeeping (streams_, draining_, etc.) without
-    // driving a real handshake. Production code must use the parameterized
-    // ctor above.
-    Connection() = default;
-
-    int init_h3();
-
-    Server *server_ = nullptr;
-    ngtcp2_conn *conn_ = nullptr;
-    SSL *ssl_ = nullptr;
-    nghttp3_conn *h3_ = nullptr;
-    ngtcp2_crypto_conn_ref conn_ref_{};
-    sockaddr_storage remote_addr_{};
-    socklen_t remote_addrlen_ = 0;
-    sockaddr_storage local_addr_{};
-    socklen_t local_addrlen_ = 0;
-    std::map<int64_t, StreamCtx> streams_;
-    bool handshake_done_ = false;
-    bool closed_ = false;
-    bool draining_ = false;
-    int64_t peer_goaway_id_ = -1;
-};
-
-// ---------- Server ----------
-class Server {
-public:
-    Server() = default;
-    ~Server();
-
-    int run(const char *host, const char *port, const char *cert, const char *key);
-
-    // REST router store, populated by run() once the redis connection is up.
-    // Connections call this from submit_response() to dispatch requests.
-    dist_cache::rest::Store *store() { return store_.get(); }
-
-protected:
-    int setup_socket(const char *host, const char *port);
-    int setup_ssl(const char *cert, const char *key);
-    int read_socket();
-    void poll_loop();
-    void on_packet(const sockaddr *remote, socklen_t remote_len,
-                   const uint8_t *data, size_t datalen);
-    void sweep_closed();
-
-    int fd_ = -1;
-    SSL_CTX *ssl_ctx_ = nullptr;
-    sockaddr_storage local_addr_{};
-    socklen_t local_addrlen_ = 0;
-    // Map DCID bytes -> Connection. Real impl needs multi-CID tracking.
-    std::map<std::string, std::unique_ptr<Connection>> conns_;
-
-    // Backing storage. Owned by Server so its lifetime spans every Connection
-    // and every in-flight stream. Both are null until run() initializes them.
-    std::unique_ptr<dist_cache::redis::Client> redis_;
-    std::unique_ptr<dist_cache::rest::Store>   store_;
-};
-
 // ngtcp2 needs an SSL* lookup from a conn ref
 ngtcp2_conn *get_conn_from_ref(ngtcp2_crypto_conn_ref *ref) {
     return static_cast<Connection *>(ref->user_data)->conn();
+}
+
+// ---------- RedisStore impl ----------
+RedisStore::RedisStore(dist_cache::redis::Client *client) : client_(client) {}
+
+void RedisStore::kv_set(const std::string &key, std::string value,
+                        std::optional<int64_t> expiry_sec) {
+    client_->kv_set(key, value, expiry_sec);
+}
+
+std::optional<std::string> RedisStore::kv_get(const std::string &key) {
+    return client_->kv_get(key);
+}
+
+bool RedisStore::kv_delete(const std::string &key) {
+    return client_->kv_delete(key);
+}
+
+std::optional<nlohmann::json> RedisStore::json_get(const std::string &path) const {
+    try {
+        auto v = client_->json_get(kJsonKey, path);
+        if (!v) return std::nullopt;
+        // JSON.GET on a non-existent path returns an empty array; treat
+        // that as "not found" so the REST layer can emit 404.
+        if (v->is_array() && v->empty()) return std::nullopt;
+        return v;
+    } catch (const dist_cache::redis::RedisError &) {
+        return std::nullopt;
+    }
+}
+
+bool RedisStore::json_set(const std::string &path, nlohmann::json value,
+                          std::optional<int64_t> expiry_sec) {
+    // Spec: expiry_sec only allowed at root. Matches the in-memory rule.
+    if (expiry_sec && path != "$") return false;
+    try {
+        client_->json_set(kJsonKey, path, value, expiry_sec);
+        return true;
+    } catch (const dist_cache::redis::RedisError &) {
+        // Most commonly: parent path missing on a sub-path SET.
+        return false;
+    }
+}
+
+bool RedisStore::json_delete(const std::string &path) {
+    try { return client_->json_delete(kJsonKey, path); }
+    catch (const dist_cache::redis::RedisError &) { return false; }
 }
 
 // ---------- Connection impl ----------
@@ -300,7 +143,7 @@ Connection::Connection(Server *server, const ngtcp2_cid &dcid,
 
     // Pick our own server-side SCID
     ngtcp2_cid our_scid;
-    our_scid.datalen = NGTCP2_MIN_INITIAL_DCIDLEN;
+    our_scid.datalen = kServerCidLen;
     RAND_bytes(our_scid.data, static_cast<int>(our_scid.datalen));
 
     ngtcp2_path path;
@@ -327,7 +170,7 @@ Connection::Connection(Server *server, const ngtcp2_cid &dcid,
     callbacks.acked_stream_data_offset    = ng_acked_stream_data;
     callbacks.stream_open                 = ng_stream_open;
     callbacks.stream_close                = ng_stream_close;
-    callbacks.extend_max_local_streams_bidi = ng_extend_max_local_streams_bidi;
+    callbacks.extend_max_remote_streams_bidi = ng_extend_max_remote_streams_bidi;
     callbacks.rand                        = rand_cb;
     callbacks.get_new_connection_id       = get_new_cid_cb;
     callbacks.stream_stop_sending         = ng_stream_stop_sending;
@@ -358,23 +201,36 @@ Connection::Connection(Server *server, const ngtcp2_cid &dcid,
         return;
     }
 
+    if (ngtcp2_crypto_ossl_ctx_new(&ossl_ctx_, nullptr) != 0) {
+        std::fprintf(stderr, "ngtcp2_crypto_ossl_ctx_new failed\n");
+        return;
+    }
+
     ssl_ = SSL_new(ssl_ctx);
-    SSL_set_accept_state(ssl_);
-    SSL_set_quic_tls_early_data_enabled(ssl_, 0);
+    if (!ssl_) {
+        std::fprintf(stderr, "SSL_new failed\n");
+        return;
+    }
+    ngtcp2_crypto_ossl_ctx_set_ssl(ossl_ctx_, ssl_);
+
+    if (ngtcp2_crypto_ossl_configure_server_session(ssl_) != 0) {
+        std::fprintf(stderr, "ngtcp2_crypto_ossl_configure_server_session failed\n");
+    }
 
     conn_ref_.get_conn = get_conn_from_ref;
     conn_ref_.user_data = this;
     SSL_set_app_data(ssl_, &conn_ref_);
-    if (ngtcp2_crypto_ossl_configure_server_session(ssl_) != 0) {
-        std::fprintf(stderr, "ngtcp2_crypto_ossl_configure_server_session failed\n");
-    }
-    ngtcp2_conn_set_tls_native_handle(conn_, ssl_);
+    SSL_set_accept_state(ssl_);
+    SSL_set_quic_tls_early_data_enabled(ssl_, 0);
+    ngtcp2_conn_set_tls_native_handle(conn_, ossl_ctx_);
 }
 
 Connection::~Connection() {
     if (h3_) nghttp3_conn_del(h3_);
+    if (ssl_) SSL_set_app_data(ssl_, nullptr);
     if (conn_) ngtcp2_conn_del(conn_);
     if (ssl_) SSL_free(ssl_);
+    if (ossl_ctx_) ngtcp2_crypto_ossl_ctx_del(ossl_ctx_);
 }
 
 int Connection::init_h3() {
@@ -400,6 +256,9 @@ int Connection::init_h3() {
     if (nghttp3_conn_server_new(&h3_, &cb, &settings, mem, this) != 0)
         return -1;
 
+    const auto *params = ngtcp2_conn_get_local_transport_params2(conn_);
+    nghttp3_conn_set_max_client_streams_bidi(h3_, params->initial_max_streams_bidi);
+
     int64_t ctrl, qenc, qdec;
     if (ngtcp2_conn_open_uni_stream(conn_, &ctrl, nullptr) != 0) return -1;
     if (ngtcp2_conn_open_uni_stream(conn_, &qenc, nullptr) != 0) return -1;
@@ -419,6 +278,7 @@ int Connection::read_pkt(const sockaddr *remote, socklen_t remote_len,
     path.user_data = nullptr;
 
     ngtcp2_pkt_info pi{};
+    //ngtcp2_conn_read_pkt performs QUIC handshake as well.
     int rv = ngtcp2_conn_read_pkt(conn_, &path, &pi, data, datalen, now_ns());
     if (rv != 0) {
         std::fprintf(stderr, "ngtcp2_conn_read_pkt: %s\n", ngtcp2_strerror(rv));
@@ -604,12 +464,10 @@ int Connection::on_stream_end(int64_t stream_id) {
 
 int Connection::submit_response(int64_t stream_id) {
     auto &s = ensure_stream(stream_id);
+    if (s.response_submitted) return 0;
     s.stream_id = stream_id;
 
-    // Route through the OpenAPI-spec REST handler. The store backing this
-    // call is Redis when running under dist_cache.exe (see Server::run).
-    auto resp = dist_cache::rest::handle(
-        *server_->store(), s.method, s.path, s.req_body);
+    auto resp = server_->handle_request(s.method, s.path, s.req_body);
 
     // Stable storage for header values referenced by the data reader below.
     s.resp_status = std::to_string(resp.status);
@@ -683,6 +541,7 @@ int Connection::submit_response(int64_t stream_id) {
         nghttp3_conn_set_stream_user_data(h3_, stream_id, nullptr);
         return rv;
     }
+    s.response_submitted = true;
 
     return 0;
 }
@@ -690,7 +549,8 @@ int Connection::submit_response(int64_t stream_id) {
 // ---------- ngtcp2 callbacks impl ----------
 int ng_recv_stream_data(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
                         uint64_t, const uint8_t *data, size_t datalen,
-                        void *user_data, void *) {
+                        void *user_data, void *) { 
+    //data will be same pointer as ngtcp2_conn_read_pkt, which in turn is 
     auto *c = static_cast<Connection *>(user_data);
     if (!c->h3()) return 0;
     nghttp3_ssize n = nghttp3_conn_read_stream(
@@ -732,7 +592,10 @@ int ng_stream_close(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
     return 0;
 }
 
-int ng_extend_max_local_streams_bidi(ngtcp2_conn *, uint64_t, void *) {
+int ng_extend_max_remote_streams_bidi(ngtcp2_conn *, uint64_t max_streams,
+                                      void *user_data) {
+    auto *c = static_cast<Connection *>(user_data);
+    if (c->h3()) nghttp3_conn_set_max_client_streams_bidi(c->h3(), max_streams);
     return 0;
 }
 
@@ -773,7 +636,12 @@ int h3_recv_header(nghttp3_conn *, int64_t stream_id, int32_t,
     return 0;
 }
 
-int h3_end_headers(nghttp3_conn *, int64_t, int, void *, void *) { return 0; }
+int h3_end_headers(nghttp3_conn *, int64_t stream_id, int fin,
+                   void *conn_user_data, void *) {
+    if (!fin) return 0;
+    auto *c = static_cast<Connection *>(conn_user_data);
+    return c->on_stream_end(stream_id);
+}
 
 int h3_recv_data(nghttp3_conn *, int64_t stream_id, const uint8_t *data,
                  size_t datalen, void *conn_user_data, void *) {
@@ -829,6 +697,34 @@ int h3_go_away(nghttp3_conn *, int64_t id, void *conn_user_data) {
 Server::~Server() {
     if (fd_ >= 0) ::close(fd_);
     if (ssl_ctx_) SSL_CTX_free(ssl_ctx_);
+}
+
+int Server::init_backend() {
+    // Connect to Redis. Host/port overridable via env so the test harness
+    // (dist_cache_test.sh) can point at the redis-server it spins up.
+    const char *rhost = std::getenv("DC_REDIS_HOST");
+    const char *rport = std::getenv("DC_REDIS_PORT");
+    int rport_n = rport ? std::atoi(rport) : 6379;
+    try {
+        redis_ = std::make_unique<dist_cache::redis::Client>(
+            rhost ? rhost : "127.0.0.1", rport_n);
+    } catch (const dist_cache::redis::RedisError &e) {
+        std::fprintf(stderr, "redis connect failed: %s\n", e.what());
+        return 1;
+    }
+    store_ = std::make_unique<RedisStore>(redis_.get());
+    backend_detail_ = "(redis ";
+    backend_detail_ += rhost ? rhost : "127.0.0.1";
+    backend_detail_ += ":";
+    backend_detail_ += std::to_string(rport_n);
+    backend_detail_ += ")";
+    return 0;
+}
+
+dist_cache::rest::Response Server::handle_request(std::string_view method,
+                                                  std::string_view target,
+                                                  std::string_view body) {
+    return dist_cache::rest::handle(*store_, method, target, body);
 }
 
 int Server::setup_socket(const char *host, const char *port) {
@@ -893,16 +789,16 @@ void Server::on_packet(const sockaddr *remote, socklen_t remote_len,
                        const uint8_t *data, size_t datalen) {
     ngtcp2_version_cid vc;
     int rv = ngtcp2_pkt_decode_version_cid(&vc, data, datalen,
-                                           NGTCP2_MAX_CIDLEN);
+                                           kServerCidLen);
     if (rv == NGTCP2_ERR_VERSION_NEGOTIATION) {
         // Skip version negotiation handling for brevity.
         return;
     }
     if (rv != 0) return;
 
-    std::string key(reinterpret_cast<const char *>(vc.dcid), vc.dcidlen);
-    auto it = conns_.find(key);
-    if (it == conns_.end()) {
+    std::string key = cid_key(vc.dcid, vc.dcidlen);
+    auto it = cid_index_.find(key);
+    if (it == cid_index_.end()) {
         // New connection: client's first Initial. Only handle long-header packets.
         ngtcp2_cid dcid, scid, ocid;
         std::memcpy(dcid.data, vc.dcid, vc.dcidlen); dcid.datalen = vc.dcidlen;
@@ -914,14 +810,18 @@ void Server::on_packet(const sockaddr *remote, socklen_t remote_len,
             remote, remote_len, vc.version, ssl_ctx_);
         if (!conn->conn()) return;
         auto *raw = conn.get();
+        cid_index_[key] = raw;
         conns_.emplace(key, std::move(conn));
         if (raw->read_pkt(remote, remote_len, data, datalen) != 0) {
-            if (raw->closed()) { conns_.erase(key); return; }
+            if (raw->closed()) { sweep_closed(); return; }
         }
         raw->write_pending(fd_);
+        associate_cids(raw);
     } else {
-        it->second->read_pkt(remote, remote_len, data, datalen);
-        it->second->write_pending(fd_);
+        auto *conn = it->second;
+        conn->read_pkt(remote, remote_len, data, datalen);
+        conn->write_pending(fd_);
+        associate_cids(conn);
     }
 }
 
@@ -942,17 +842,35 @@ int Server::read_socket() {
     }
 }
 
+void Server::associate_cids(Connection *conn) {
+    if (!conn || !conn->conn()) return;
+    std::vector<ngtcp2_cid> scids(ngtcp2_conn_get_scid2(conn->conn(), nullptr));
+    ngtcp2_conn_get_scid2(conn->conn(), scids.data());
+    for (const auto &cid : scids) {
+        cid_index_[cid_key(cid)] = conn;
+    }
+}
+
+void Server::dissociate_cids(const Connection *conn) {
+    for (auto it = cid_index_.begin(); it != cid_index_.end();) {
+        if (it->second == conn) it = cid_index_.erase(it);
+        else ++it;
+    }
+}
+
 void Server::sweep_closed() {
     for (auto it = conns_.begin(); it != conns_.end();) {
-        if (it->second->closed()) it = conns_.erase(it);
+        if (it->second->closed()) {
+            dissociate_cids(it->second.get());
+            it = conns_.erase(it);
+        }
         else ++it;
     }
 }
 
 void Server::poll_loop() {
     pollfd pfd{fd_, POLLIN, 0};
-    int flags = fcntl(fd_, F_GETFL, 0);
-    fcntl(fd_, F_SETFL, flags | O_NONBLOCK);
+    fcntl(fd_, F_SETFL, fcntl(fd_, F_GETFL, 0) | O_NONBLOCK);
 
     for (;;) {
         // Compute earliest expiry across connections
@@ -1011,24 +929,13 @@ int Server::run(const char *host, const char *port, const char *cert,
         std::fprintf(stderr, "ngtcp2_crypto_ossl_init failed\n");
         return 1;
     }
-    // Connect to Redis. Host/port overridable via env so the test harness
-    // (dist_cache_test.sh) can point at the redis-server it spins up.
-    const char *rhost = std::getenv("DC_REDIS_HOST");
-    const char *rport = std::getenv("DC_REDIS_PORT");
-    int rport_n = rport ? std::atoi(rport) : 6379;
-    try {
-        redis_ = std::make_unique<dist_cache::redis::Client>(
-            rhost ? rhost : "127.0.0.1", rport_n);
-    } catch (const dist_cache::redis::RedisError &e) {
-        std::fprintf(stderr, "redis connect failed: %s\n", e.what());
-        return 1;
-    }
-    store_ = std::make_unique<RedisStore>(redis_.get());
+    if (init_backend() != 0) return 1;
 
     if (setup_socket(host, port) != 0) return 1;
     if (setup_ssl(cert, key) != 0) return 1;
-    std::printf("HTTP/3 server listening on %s:%s (redis %s:%d)\n",
-                host, port, rhost ? rhost : "127.0.0.1", rport_n);
+    std::printf("HTTP/3 server listening on %s:%s", host, port);
+    if (!backend_detail_.empty()) std::printf(" %s", backend_detail_.c_str());
+    std::printf("\n");
     poll_loop();
     return 0;
 }

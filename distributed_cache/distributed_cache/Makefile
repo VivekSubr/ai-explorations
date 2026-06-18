@@ -9,10 +9,16 @@ NGHTTP3_PREFIX := $(NGHTTP3_SRC)/install
 NGTCP2_SRC     := $(THIRD_PARTY)/ngtcp2
 NGTCP2_PREFIX  := $(NGTCP2_SRC)/install
 
+CURL_SRC       := $(THIRD_PARTY)/curl/src
+CURL_PREFIX    := $(THIRD_PARTY)/curl/install
+
 NPROC          := $(shell nproc 2>/dev/null || echo 2)
 
 # Make ngtcp2's pkg-config see the locally installed openssl/nghttp3.
 PKG_CONFIG_PATH_LOCAL := $(OPENSSL_PREFIX)/lib/pkgconfig:$(OPENSSL_PREFIX)/lib64/pkgconfig:$(NGHTTP3_PREFIX)/lib/pkgconfig
+CURL_PKG_CONFIG_PATH_LOCAL := $(OPENSSL_PREFIX)/lib/pkgconfig:$(OPENSSL_PREFIX)/lib64/pkgconfig:$(NGHTTP3_PREFIX)/lib/pkgconfig:$(NGTCP2_PREFIX)/lib/pkgconfig
+CURL_LD_LIBRARY_PATH_LOCAL := $(OPENSSL_PREFIX)/lib:$(NGHTTP3_PREFIX)/lib:$(NGTCP2_PREFIX)/lib
+CURL_LDFLAGS_LOCAL := -Wl,-rpath,$(OPENSSL_PREFIX)/lib -Wl,-rpath,$(NGHTTP3_PREFIX)/lib -Wl,-rpath,$(NGTCP2_PREFIX)/lib
 
 build: openssl nghttp3 ngtcp2
 
@@ -89,6 +95,58 @@ $(NGTCP2_PREFIX)/.installed: $(NGTCP2_SRC)/CMakeLists.txt $(OPENSSL_PREFIX)/.ins
 	fi
 	mkdir -p $(NGTCP2_PREFIX) && touch $@
 
+# Build this when the installed curl does not have HTTP/3 support. This target
+# is intentionally not part of `make build`; dist_cache_test.sh will prefer the
+# resulting third_party/curl/install/bin/curl when it exists.
+curl: $(CURL_PREFIX)/.installed
+
+$(CURL_SRC)/configure:
+	@if [ -d "$(CURL_SRC)/.git" ]; then \
+	    echo "curl source already present at $(CURL_SRC), skipping clone"; \
+	else \
+	    mkdir -p $(THIRD_PARTY)/curl && \
+	    git clone --depth 1 https://github.com/curl/curl.git $(CURL_SRC); \
+	fi
+	cd $(CURL_SRC) && autoreconf -fi
+
+$(CURL_PREFIX)/.installed: $(CURL_SRC)/configure $(OPENSSL_PREFIX)/.installed $(NGHTTP3_PREFIX)/.installed $(NGTCP2_PREFIX)/.installed
+	@if [ -x "$(CURL_PREFIX)/bin/curl" ] && "$(CURL_PREFIX)/bin/curl" -V | grep -q HTTP3; then \
+	    echo "curl with HTTP/3 already built at $(CURL_PREFIX), skipping"; \
+	else \
+	    cd $(CURL_SRC) && \
+	    PKG_CONFIG_PATH=$(CURL_PKG_CONFIG_PATH_LOCAL):$$PKG_CONFIG_PATH \
+	    LD_LIBRARY_PATH=$(CURL_LD_LIBRARY_PATH_LOCAL):$$LD_LIBRARY_PATH \
+	    LDFLAGS="$(CURL_LDFLAGS_LOCAL) $$LDFLAGS" \
+	    ./configure \
+	        --prefix=$(CURL_PREFIX) \
+	        --with-openssl=$(OPENSSL_PREFIX) \
+	        --with-nghttp3=$(NGHTTP3_PREFIX) \
+	        --with-ngtcp2=$(NGTCP2_PREFIX) \
+	        --without-libpsl \
+	        --without-libidn2 \
+	        --without-brotli \
+	        --without-zstd \
+	        --without-zlib \
+	        --without-libssh2 \
+	        --without-librtmp \
+	        --disable-ldap \
+	        --disable-ldaps \
+	        --disable-rtsp \
+	        --disable-dict \
+	        --disable-telnet \
+	        --disable-tftp \
+	        --disable-pop3 \
+	        --disable-imap \
+	        --disable-smtp \
+	        --disable-gopher \
+	        --disable-mqtt \
+	        --disable-manual \
+	        --disable-dependency-tracking && \
+	    $(MAKE) -C $(CURL_SRC) -j$(NPROC) && \
+	    $(MAKE) -C $(CURL_SRC) install; \
+	fi
+	mkdir -p $(CURL_PREFIX) && touch $@
+
 clean:
 	$(MAKE) -C server clean
 
@@ -104,4 +162,4 @@ test:
 	./dist_cache_test.sh $(ARGS)
 
 # .PHONY is a legacy feature of make - it declares 'clean' is target, there will be no file named 'clean'
-.PHONY: clean distclean test build openssl nghttp3 ngtcp2
+.PHONY: clean distclean test build openssl nghttp3 ngtcp2 curl
