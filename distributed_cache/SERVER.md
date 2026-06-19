@@ -40,15 +40,32 @@ nghttp2 callbacks are all triggered (conditionally) from nghttp3_conn_read_strea
                 → h3_* callbacks
 ```
 
+### CID
+**Connection ID**, UDP packets are identified only by (src-ip, src-port, dest-ip, dest-port) 4-tuple, but QUIC adds a connection id for all packets.
+
+Server extracts using ngtcp2_pkt_decode_version_cid(), and adds every packet to map, so that every packet has an owning Connection object.
+```
+    std::map<std::string, std::unique_ptr<Connection>> conns_;
+    std::map<std::string, Connection *>                cid_index_;
+```
+
 ### ngtcp2 and nghttp2 flows
 http/3 needs TLS as a hard requirement, so first setup TLS: 
 * ngtcp2_crypto_ossl_init to libngtcp2_crypto_ossl 
 * ngtcp2_crypto_ossl_configure_server_context --> give a SSL context and setup SSL using openssl
 
+Poll Loop,
+* call poll on listening socket
+* once packet is recieved, start read flow
+* Any connection that has timer expired, call write_pending
+* Close connections that are finished
+
 Packet reading flow, 
 * Get QUIC connection ID using ngtcp2_pkt_decode_version_cid, and use as key in connection map.
 * Call ngtcp2_conn_read_pkt on packet (via connection object's read_pkt method)
 * ng_recv_stream_data callback is called by ngtcp2_conn_read_pkt on STREAM frame, which calls nghttp3_conn_read_stream, which in turn reads into 'data' pointer.
+
+Write pending flow,
 
 
 ### Redis flows

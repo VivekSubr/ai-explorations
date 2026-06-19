@@ -9,9 +9,10 @@ implementation files.
 - [server.h](server.h) exposes `dist_cache::run_server(...)` to the rest of the
   program.
 - [main.cc](main.cc) parses process arguments and calls `run_server`.
-- [server_impl.h](server_impl.h) contains private implementation declarations:
-  `StreamCtx`, `RedisStore`, `Connection`, `Server`, and ngtcp2/nghttp3 callback
-  prototypes.
+- [server_impl.h](server_impl.h) contains private transport/server declarations:
+  `StreamCtx`, `Connection`, `Server`, and ngtcp2/nghttp3 callback prototypes.
+- [server_redis.h](server_redis.h) and [server_redis.cc](server_redis.cc)
+  contain the private Redis-backed `dist_cache::rest::Store` adapter.
 - [server.cc](server.cc) contains the implementation of the HTTP/3 server,
   QUIC/TLS setup, socket loop, callbacks, request routing, and response writing.
 - [hello.cc](hello.cc) is a tiny example HTTP/3 server built on the same private
