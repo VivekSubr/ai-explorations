@@ -1,0 +1,273 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="940" viewBox="0 0 1320 940" role="img" aria-labelledby="title desc">
+  <title id="title">Redis Cache Model</title>
+  <desc id="desc">Cache model diagram showing Redis hashes, sorted sets, streams, fan-out, timeline consumers, notification consumers, and Postgres as source of truth.</desc>
+
+  <defs>
+    <style>
+      .page { fill: #f7f8fb; }
+      .title { font: 700 30px Inter, Arial, sans-serif; fill: #1d2733; }
+      .subtitle { font: 400 14px Inter, Arial, sans-serif; fill: #617083; }
+      .lane { fill: #ffffff; stroke: #d6dee9; stroke-width: 1.4; }
+      .lane-title { font: 700 14px Inter, Arial, sans-serif; fill: #334155; }
+      .box { fill: #ffffff; stroke: #cfd8e3; stroke-width: 1.5; }
+      .box-title { font: 700 15px Inter, Arial, sans-serif; fill: #ffffff; }
+      .box-body { font: 400 12.5px Inter, Arial, sans-serif; fill: #334155; }
+      .muted { font: 400 11.5px Inter, Arial, sans-serif; fill: #66758a; }
+      .small-strong { font: 700 11.5px Inter, Arial, sans-serif; fill: #334155; }
+      .api-header { fill: #315f8a; }
+      .pg-header { fill: #52616f; }
+      .redis-header { fill: #b43a36; }
+      .zset-header { fill: #6b7f2c; }
+      .stream-header { fill: #9a6a18; }
+      .consumer-header { fill: #2e6654; }
+      .worker-header { fill: #76548f; }
+      .flow { fill: none; stroke: #40566d; stroke-width: 2; }
+      .flow-cache { fill: none; stroke: #b43a36; stroke-width: 2.2; }
+      .flow-stream { fill: none; stroke: #9a6a18; stroke-width: 2.2; }
+      .flow-read { fill: none; stroke: #2e6654; stroke-width: 2; }
+      .label-bg { fill: #f7f8fb; }
+      .label { font: 700 11.5px Inter, Arial, sans-serif; fill: #40566d; }
+      .label-red { font: 700 11.5px Inter, Arial, sans-serif; fill: #b43a36; }
+      .label-gold { font: 700 11.5px Inter, Arial, sans-serif; fill: #8a5c12; }
+      .label-green { font: 700 11.5px Inter, Arial, sans-serif; fill: #2e6654; }
+      .divider { stroke: #e3e8ef; stroke-width: 1; }
+      .chip { fill: #eef2f6; stroke: #d3dce7; stroke-width: 1; }
+      .chip-text { font: 700 11px Inter, Arial, sans-serif; fill: #536273; }
+    </style>
+
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 Z" fill="#40566d" />
+    </marker>
+    <marker id="arrow-red" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 Z" fill="#b43a36" />
+    </marker>
+    <marker id="arrow-gold" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 Z" fill="#9a6a18" />
+    </marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 Z" fill="#2e6654" />
+    </marker>
+  </defs>
+
+  <rect class="page" width="1320" height="940" />
+
+  <text class="title" x="60" y="58">Redis Cache Model</text>
+  <text class="subtitle" x="60" y="84">Fan-out, timelines, follow graph cache, and notification streams from DATABASE.md</text>
+
+  <!-- Lanes -->
+  <rect class="lane" x="50" y="115" width="235" height="735" rx="10" />
+  <text class="lane-title" x="75" y="145">Write and Read APIs</text>
+
+  <rect class="lane" x="315" y="115" width="220" height="735" rx="10" />
+  <text class="lane-title" x="340" y="145">Durable Data</text>
+
+  <rect class="lane" x="565" y="115" width="420" height="735" rx="10" />
+  <text class="lane-title" x="590" y="145">Redis Cache</text>
+
+  <rect class="lane" x="1015" y="115" width="255" height="735" rx="10" />
+  <text class="lane-title" x="1040" y="145">Async Consumers</text>
+
+  <!-- API boxes -->
+  <g id="write-api" transform="translate(80 185)">
+    <rect class="box" width="170" height="128" rx="8" />
+    <rect class="api-header" width="170" height="38" rx="8" />
+    <path d="M 0 30 H 170 V 38 H 0 Z" fill="#315f8a" />
+    <text class="box-title" x="18" y="25">Write API</text>
+    <text class="box-body" x="18" y="60">create tweet</text>
+    <text class="box-body" x="18" y="84">follow user</text>
+    <text class="muted" x="18" y="110">writes canonical rows</text>
+  </g>
+
+  <g id="read-api" transform="translate(80 610)">
+    <rect class="box" width="170" height="130" rx="8" />
+    <rect class="api-header" width="170" height="38" rx="8" />
+    <path d="M 0 30 H 170 V 38 H 0 Z" fill="#315f8a" />
+    <text class="box-title" x="18" y="25">Read API</text>
+    <text class="box-body" x="18" y="60">home timeline</text>
+    <text class="box-body" x="18" y="84">user tweets</text>
+    <text class="muted" x="18" y="110">Redis first, PG fallback</text>
+  </g>
+
+  <!-- Durable data boxes -->
+  <g id="postgres" transform="translate(345 185)">
+    <rect class="box" width="160" height="128" rx="8" />
+    <rect class="pg-header" width="160" height="38" rx="8" />
+    <path d="M 0 30 H 160 V 38 H 0 Z" fill="#52616f" />
+    <text class="box-title" x="18" y="25">Postgres</text>
+    <text class="box-body" x="18" y="60">users</text>
+    <text class="box-body" x="18" y="84">tweets</text>
+    <text class="box-body" x="18" y="108">follows</text>
+  </g>
+
+  <g id="fanout-worker" transform="translate(340 385)">
+    <rect class="box" width="170" height="145" rx="8" />
+    <rect class="worker-header" width="170" height="38" rx="8" />
+    <path d="M 0 30 H 170 V 38 H 0 Z" fill="#76548f" />
+    <text class="box-title" x="18" y="25">Fan-out Worker</text>
+    <text class="box-body" x="18" y="60">updates Redis keys</text>
+    <text class="box-body" x="18" y="84">publishes streams</text>
+    <text class="muted" x="18" y="112">idempotent retries</text>
+    <text class="muted" x="18" y="132">rebuilds from Postgres</text>
+  </g>
+
+  <!-- Redis data structures -->
+  <g id="tweet-hash" transform="translate(595 170)">
+    <rect class="box" width="170" height="138" rx="8" />
+    <rect class="redis-header" width="170" height="38" rx="8" />
+    <path d="M 0 30 H 170 V 38 H 0 Z" fill="#b43a36" />
+    <text class="box-title" x="18" y="25">Tweet Hash</text>
+    <text class="small-strong" x="18" y="62">tweet:{tweet_id}</text>
+    <line class="divider" x1="18" y1="74" x2="152" y2="74" />
+    <text class="box-body" x="18" y="98">user_id: "123"</text>
+    <text class="box-body" x="18" y="122">text: "Hello world"</text>
+  </g>
+
+  <g id="user-tweets" transform="translate(790 170)">
+    <rect class="box" width="170" height="138" rx="8" />
+    <rect class="zset-header" width="170" height="38" rx="8" />
+    <path d="M 0 30 H 170 V 38 H 0 Z" fill="#6b7f2c" />
+    <text class="box-title" x="18" y="25">User Tweets ZSET</text>
+    <text class="small-strong" x="18" y="62">user:{id}:tweets</text>
+    <line class="divider" x1="18" y1="74" x2="152" y2="74" />
+    <text class="box-body" x="18" y="98">member: tweet_id</text>
+    <text class="box-body" x="18" y="122">score: timestamp</text>
+  </g>
+
+  <g id="following-zset" transform="translate(595 350)">
+    <rect class="box" width="170" height="138" rx="8" />
+    <rect class="zset-header" width="170" height="38" rx="8" />
+    <path d="M 0 30 H 170 V 38 H 0 Z" fill="#6b7f2c" />
+    <text class="box-title" x="18" y="25">Following ZSET</text>
+    <text class="small-strong" x="18" y="62">user:{id}:following</text>
+    <line class="divider" x1="18" y1="74" x2="152" y2="74" />
+    <text class="box-body" x="18" y="98">member: followed_id</text>
+    <text class="box-body" x="18" y="122">score: timestamp</text>
+  </g>
+
+  <g id="followers-zset" transform="translate(790 350)">
+    <rect class="box" width="170" height="138" rx="8" />
+    <rect class="zset-header" width="170" height="38" rx="8" />
+    <path d="M 0 30 H 170 V 38 H 0 Z" fill="#6b7f2c" />
+    <text class="box-title" x="18" y="25">Followers ZSET</text>
+    <text class="small-strong" x="18" y="62">user:{id}:followers</text>
+    <line class="divider" x1="18" y1="74" x2="152" y2="74" />
+    <text class="box-body" x="18" y="98">member: follower_id</text>
+    <text class="box-body" x="18" y="122">score: timestamp</text>
+  </g>
+
+  <g id="tweet-stream" transform="translate(595 570)">
+    <rect class="box" width="365" height="72" rx="8" />
+    <rect class="stream-header" width="365" height="34" rx="8" />
+    <path d="M 0 26 H 365 V 34 H 0 Z" fill="#9a6a18" />
+    <text class="box-title" x="18" y="23">tweets:events Stream</text>
+    <text class="box-body" x="18" y="55">user_id, tweet_id, timestamp, content</text>
+  </g>
+
+  <g id="followed-stream" transform="translate(595 670)">
+    <rect class="box" width="170" height="82" rx="8" />
+    <rect class="stream-header" width="170" height="34" rx="8" />
+    <path d="M 0 26 H 170 V 34 H 0 Z" fill="#9a6a18" />
+    <text class="box-title" x="18" y="23">followed:events</text>
+    <text class="box-body" x="18" y="56">user_id</text>
+    <text class="box-body" x="82" y="56">followed_id</text>
+  </g>
+
+  <g id="follower-stream" transform="translate(790 670)">
+    <rect class="box" width="170" height="82" rx="8" />
+    <rect class="stream-header" width="170" height="34" rx="8" />
+    <path d="M 0 26 H 170 V 34 H 0 Z" fill="#9a6a18" />
+    <text class="box-title" x="18" y="23">follower:events</text>
+    <text class="box-body" x="18" y="56">user_id</text>
+    <text class="box-body" x="82" y="56">follower_id</text>
+  </g>
+
+  <!-- Consumers -->
+  <g id="timeline-service" transform="translate(1045 220)">
+    <rect class="box" width="190" height="130" rx="8" />
+    <rect class="consumer-header" width="190" height="38" rx="8" />
+    <path d="M 0 30 H 190 V 38 H 0 Z" fill="#2e6654" />
+    <text class="box-title" x="18" y="25">Timeline Service</text>
+    <text class="box-body" x="18" y="60">consumer groups</text>
+    <text class="box-body" x="18" y="84">fan-out timelines</text>
+    <text class="muted" x="18" y="110">XREADGROUP</text>
+  </g>
+
+  <g id="notification-service" transform="translate(1045 430)">
+    <rect class="box" width="190" height="130" rx="8" />
+    <rect class="consumer-header" width="190" height="38" rx="8" />
+    <path d="M 0 30 H 190 V 38 H 0 Z" fill="#2e6654" />
+    <text class="box-title" x="18" y="25">Notification Service</text>
+    <text class="box-body" x="18" y="60">consumer groups</text>
+    <text class="box-body" x="18" y="84">threshold checks</text>
+    <text class="muted" x="18" y="110">XREADGROUP</text>
+  </g>
+
+  <g id="repair-worker" transform="translate(1045 640)">
+    <rect class="box" width="190" height="100" rx="8" />
+    <rect class="worker-header" width="190" height="38" rx="8" />
+    <path d="M 0 30 H 190 V 38 H 0 Z" fill="#76548f" />
+    <text class="box-title" x="18" y="25">Repair Jobs</text>
+    <text class="box-body" x="18" y="60">rebuild missing keys</text>
+    <text class="box-body" x="18" y="82">trim bounded ZSETs</text>
+  </g>
+
+  <!-- Flows -->
+  <path class="flow" d="M 250 240 H 345" marker-end="url(#arrow)" />
+  <rect class="label-bg" x="270" y="228" width="54" height="20" rx="4" />
+  <text class="label" x="279" y="242">commit</text>
+
+  <path class="flow" d="M 425 313 V 385" marker-end="url(#arrow)" />
+  <rect class="label-bg" x="437" y="337" width="54" height="20" rx="4" />
+  <text class="label" x="446" y="351">events</text>
+
+  <path class="flow-cache" d="M 510 420 C 540 300, 555 245, 595 235" marker-end="url(#arrow-red)" />
+  <path class="flow-cache" d="M 510 430 C 590 255, 710 235, 790 235" marker-end="url(#arrow-red)" />
+  <rect class="label-bg" x="536" y="280" width="92" height="20" rx="4" />
+  <text class="label-red" x="545" y="294">HSET / ZADD</text>
+
+  <path class="flow-cache" d="M 510 455 C 548 424, 555 420, 595 420" marker-end="url(#arrow-red)" />
+  <path class="flow-cache" d="M 510 468 C 600 510, 720 500, 790 420" marker-end="url(#arrow-red)" />
+
+  <path class="flow-stream" d="M 510 500 C 560 552, 570 600, 595 606" marker-end="url(#arrow-gold)" />
+  <path class="flow-stream" d="M 510 510 C 548 642, 568 710, 595 710" marker-end="url(#arrow-gold)" />
+  <path class="flow-stream" d="M 510 520 C 622 635, 728 710, 790 710" marker-end="url(#arrow-gold)" />
+  <rect class="label-bg" x="525" y="572" width="44" height="20" rx="4" />
+  <text class="label-gold" x="533" y="586">XADD</text>
+
+  <path class="flow-stream" d="M 960 606 C 1000 560, 1015 325, 1045 285" marker-end="url(#arrow-gold)" />
+  <path class="flow-stream" d="M 960 606 C 1010 570, 1020 505, 1045 495" marker-end="url(#arrow-gold)" />
+  <path class="flow-stream" d="M 765 710 C 902 710, 1000 340, 1045 310" marker-end="url(#arrow-gold)" />
+  <path class="flow-stream" d="M 960 710 C 1010 660, 1025 550, 1045 520" marker-end="url(#arrow-gold)" />
+  <rect class="label-bg" x="986" y="602" width="88" height="20" rx="4" />
+  <text class="label-gold" x="995" y="616">XREADGROUP</text>
+
+  <path class="flow-read" d="M 250 675 C 360 675, 480 650, 595 605" marker-end="url(#arrow-green)" />
+  <path class="flow-read" d="M 250 705 C 380 810, 825 820, 960 720" marker-end="url(#arrow-green)" />
+  <rect class="label-bg" x="355" y="646" width="78" height="20" rx="4" />
+  <text class="label-green" x="364" y="660">cache read</text>
+
+  <path class="flow" d="M 345 270 C 265 420, 265 590, 250 675" marker-end="url(#arrow)" />
+  <rect class="label-bg" x="276" y="468" width="70" height="20" rx="4" />
+  <text class="label" x="285" y="482">fallback</text>
+
+  <path class="flow" d="M 1045 688 C 900 820, 540 815, 425 530" marker-end="url(#arrow)" />
+  <rect class="label-bg" x="720" y="792" width="78" height="20" rx="4" />
+  <text class="label" x="729" y="806">reconcile</text>
+
+  <!-- Legend -->
+  <g transform="translate(70 880)">
+    <rect class="chip" width="92" height="22" rx="11" />
+    <text class="chip-text" x="14" y="15">Postgres</text>
+    <text class="muted" x="110" y="15">source of truth</text>
+
+    <rect class="chip" x="255" width="78" height="22" rx="11" />
+    <text class="chip-text" x="272" y="15">Redis</text>
+    <text class="muted" x="350" y="15">derived cache</text>
+
+    <rect class="chip" x="500" width="86" height="22" rx="11" />
+    <text class="chip-text" x="516" y="15">Streams</text>
+    <text class="muted" x="604" y="15">fan-out and notification delivery</text>
+
+    <text class="muted" x="920" y="15">Redis keys can be rebuilt from Postgres if missing or stale.</text>
+  </g>
+</svg>

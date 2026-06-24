@@ -1,0 +1,229 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img" aria-labelledby="title desc">
+  <title id="title">Postgres Datamodel</title>
+  <desc id="desc">Entity relationship diagram for users, profile_pictures, follows, and tweets tables in Postgres.</desc>
+
+  <defs>
+    <style>
+      .page { fill: #f7f8fb; }
+      .title { font: 700 30px Inter, Arial, sans-serif; fill: #1d2733; }
+      .subtitle { font: 400 14px Inter, Arial, sans-serif; fill: #617083; }
+      .table { fill: #ffffff; stroke: #cfd8e3; stroke-width: 1.5; }
+      .table-header { fill: #21415f; }
+      .table-header.alt { fill: #2f5f56; }
+      .table-name { font: 700 17px Inter, Arial, sans-serif; fill: #ffffff; }
+      .column { font: 400 13px Inter, Arial, sans-serif; fill: #263443; }
+      .column-muted { font: 400 12px Inter, Arial, sans-serif; fill: #6c7b8b; }
+      .key { font: 700 11px Inter, Arial, sans-serif; fill: #ffffff; }
+      .key-pill { fill: #58728c; }
+      .fk-pill { fill: #6f8f86; }
+      .constraint-pill { fill: #8b6d3f; }
+      .note-title { font: 700 14px Inter, Arial, sans-serif; fill: #263443; }
+      .note { font: 400 12px Inter, Arial, sans-serif; fill: #536273; }
+      .relationship { fill: none; stroke: #40566d; stroke-width: 2; }
+      .relationship.secondary { stroke: #5c756e; }
+      .relationship-label-bg { fill: #f7f8fb; }
+      .relationship-label { font: 700 12px Inter, Arial, sans-serif; fill: #40566d; }
+      .section { fill: #ffffff; stroke: #d8e0ea; stroke-width: 1.2; }
+      .legend-text { font: 400 12px Inter, Arial, sans-serif; fill: #536273; }
+      .divider { stroke: #e3e8ef; stroke-width: 1; }
+    </style>
+
+    <marker id="one" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M 10 2 L 10 12" stroke="#40566d" stroke-width="2" fill="none" />
+    </marker>
+    <marker id="many" markerWidth="18" markerHeight="18" refX="15" refY="9" orient="auto" markerUnits="strokeWidth">
+      <path d="M 15 9 L 3 2 M 15 9 L 3 9 M 15 9 L 3 16" stroke="#40566d" stroke-width="2" fill="none" />
+    </marker>
+    <marker id="one-green" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M 10 2 L 10 12" stroke="#5c756e" stroke-width="2" fill="none" />
+    </marker>
+    <marker id="many-green" markerWidth="18" markerHeight="18" refX="15" refY="9" orient="auto" markerUnits="strokeWidth">
+      <path d="M 15 9 L 3 2 M 15 9 L 3 9 M 15 9 L 3 16" stroke="#5c756e" stroke-width="2" fill="none" />
+    </marker>
+  </defs>
+
+  <rect class="page" width="1280" height="900" />
+
+  <text class="title" x="60" y="58">Postgres Datamodel</text>
+  <text class="subtitle" x="60" y="84">Twitter-style service schema from DATABASE.md</text>
+
+  <!-- users -->
+  <g id="table-users" transform="translate(80 150)">
+    <rect class="table" width="310" height="260" rx="8" />
+    <rect class="table-header" width="310" height="48" rx="8" />
+    <path d="M 0 40 H 310 V 48 H 0 Z" fill="#21415f" />
+    <text class="table-name" x="20" y="31">users</text>
+    <g transform="translate(20 68)">
+      <rect class="key-pill" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="13">PK</text>
+      <text class="column" x="40" y="14">id</text>
+      <text class="column-muted" x="160" y="14">BIGSERIAL</text>
+
+      <text class="column" x="40" y="44">name</text>
+      <text class="column-muted" x="160" y="44">VARCHAR(255) NOT NULL</text>
+
+      <text class="column" x="40" y="74">bio</text>
+      <text class="column-muted" x="160" y="74">TEXT</text>
+
+      <text class="column" x="40" y="104">created_at</text>
+      <text class="column-muted" x="160" y="104">TIMESTAMPTZ</text>
+
+      <text class="column" x="40" y="134">updated_at</text>
+      <text class="column-muted" x="160" y="134">TIMESTAMPTZ</text>
+
+      <line class="divider" x1="0" y1="158" x2="270" y2="158" />
+      <text class="note" x="0" y="186">Trigger: update_users_updated_at</text>
+    </g>
+  </g>
+
+  <!-- profile_pictures -->
+  <g id="table-profile-pictures" transform="translate(780 120)">
+    <rect class="table" width="370" height="330" rx="8" />
+    <rect class="table-header alt" width="370" height="48" rx="8" />
+    <path d="M 0 40 H 370 V 48 H 0 Z" fill="#2f5f56" />
+    <text class="table-name" x="20" y="31">profile_pictures</text>
+    <g transform="translate(20 68)">
+      <rect class="key-pill" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="13">PK</text>
+      <text class="column" x="40" y="14">id</text>
+      <text class="column-muted" x="184" y="14">BIGSERIAL</text>
+
+      <rect class="fk-pill" y="28" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="41">FK</text>
+      <text class="column" x="40" y="44">user_id</text>
+      <text class="column-muted" x="184" y="44">BIGINT UNIQUE</text>
+
+      <text class="column" x="40" y="74">image_data</text>
+      <text class="column-muted" x="184" y="74">BYTEA NOT NULL</text>
+
+      <text class="column" x="40" y="104">mime_type</text>
+      <text class="column-muted" x="184" y="104">VARCHAR(50) NOT NULL</text>
+
+      <text class="column" x="40" y="134">file_size</text>
+      <text class="column-muted" x="184" y="134">INTEGER</text>
+
+      <text class="column" x="40" y="164">width</text>
+      <text class="column-muted" x="184" y="164">INTEGER</text>
+
+      <text class="column" x="40" y="194">height</text>
+      <text class="column-muted" x="184" y="194">INTEGER</text>
+
+      <text class="column" x="40" y="224">uploaded_at</text>
+      <text class="column-muted" x="184" y="224">TIMESTAMPTZ</text>
+    </g>
+  </g>
+
+  <!-- follows -->
+  <g id="table-follows" transform="translate(455 490)">
+    <rect class="table" width="370" height="285" rx="8" />
+    <rect class="table-header alt" width="370" height="48" rx="8" />
+    <path d="M 0 40 H 370 V 48 H 0 Z" fill="#2f5f56" />
+    <text class="table-name" x="20" y="31">follows</text>
+    <g transform="translate(20 68)">
+      <rect class="key-pill" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="13">PK</text>
+      <text class="column" x="40" y="14">id</text>
+      <text class="column-muted" x="184" y="14">BIGSERIAL</text>
+
+      <rect class="fk-pill" y="28" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="41">FK</text>
+      <text class="column" x="40" y="44">follower_id</text>
+      <text class="column-muted" x="184" y="44">BIGINT NOT NULL</text>
+
+      <rect class="fk-pill" y="58" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="71">FK</text>
+      <text class="column" x="40" y="74">following_id</text>
+      <text class="column-muted" x="184" y="74">BIGINT NOT NULL</text>
+
+      <text class="column" x="40" y="104">created_at</text>
+      <text class="column-muted" x="184" y="104">TIMESTAMPTZ</text>
+
+      <line class="divider" x1="0" y1="128" x2="330" y2="128" />
+      <rect class="constraint-pill" x="0" y="150" width="28" height="18" rx="9" />
+      <text class="key" x="4" y="163">CK</text>
+      <text class="note" x="40" y="164">follower_id != following_id</text>
+      <text class="note" x="40" y="194">UNIQUE(follower_id, following_id)</text>
+    </g>
+  </g>
+
+  <!-- tweets -->
+  <g id="table-tweets" transform="translate(80 515)">
+    <rect class="table" width="330" height="295" rx="8" />
+    <rect class="table-header" width="330" height="48" rx="8" />
+    <path d="M 0 40 H 330 V 48 H 0 Z" fill="#21415f" />
+    <text class="table-name" x="20" y="31">tweets</text>
+    <g transform="translate(20 68)">
+      <rect class="key-pill" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="13">PK</text>
+      <text class="column" x="40" y="14">id</text>
+      <text class="column-muted" x="165" y="14">BIGSERIAL</text>
+
+      <rect class="fk-pill" y="28" width="28" height="18" rx="9" />
+      <text class="key" x="7" y="41">FK</text>
+      <text class="column" x="40" y="44">user_id</text>
+      <text class="column-muted" x="165" y="44">BIGINT NOT NULL</text>
+
+      <text class="column" x="40" y="74">content</text>
+      <text class="column-muted" x="165" y="74">VARCHAR(255) NOT NULL</text>
+
+      <text class="column" x="40" y="104">content_tsv</text>
+      <text class="column-muted" x="165" y="104">tsvector</text>
+
+      <text class="column" x="40" y="134">created_at</text>
+      <text class="column-muted" x="165" y="134">TIMESTAMPTZ</text>
+
+      <text class="column" x="40" y="164">updated_at</text>
+      <text class="column-muted" x="165" y="164">TIMESTAMPTZ</text>
+
+      <line class="divider" x1="0" y1="188" x2="290" y2="188" />
+      <text class="note" x="0" y="216">Triggers: updated_at, content_tsv</text>
+    </g>
+  </g>
+
+  <!-- relationships -->
+  <path class="relationship" d="M 390 235 C 530 235, 640 205, 780 205" marker-start="url(#one)" marker-end="url(#one)" />
+  <rect class="relationship-label-bg" x="552" y="198" width="86" height="20" rx="4" />
+  <text class="relationship-label" x="563" y="212">0..1 picture</text>
+
+  <path class="relationship" d="M 235 410 L 235 515" marker-start="url(#one)" marker-end="url(#many)" />
+  <rect class="relationship-label-bg" x="248" y="454" width="74" height="20" rx="4" />
+  <text class="relationship-label" x="258" y="468">many tweets</text>
+
+  <path class="relationship secondary" d="M 390 320 C 510 365, 540 430, 585 490" marker-start="url(#one-green)" marker-end="url(#many-green)" />
+  <rect class="relationship-label-bg" x="486" y="394" width="88" height="20" rx="4" />
+  <text class="relationship-label" x="497" y="408">as follower</text>
+
+  <path class="relationship secondary" d="M 390 365 C 590 430, 705 430, 740 490" marker-start="url(#one-green)" marker-end="url(#many-green)" />
+  <rect class="relationship-label-bg" x="616" y="428" width="96" height="20" rx="4" />
+  <text class="relationship-label" x="627" y="442">as following</text>
+
+  <!-- notes and legend -->
+  <g transform="translate(875 520)">
+    <rect class="section" width="325" height="255" rx="8" />
+    <text class="note-title" x="22" y="34">Indexes</text>
+    <text class="note" x="22" y="64">profile_pictures(user_id)</text>
+    <text class="note" x="22" y="89">follows(follower_id)</text>
+    <text class="note" x="22" y="114">follows(following_id)</text>
+    <text class="note" x="22" y="139">follows(follower_id, following_id)</text>
+    <text class="note" x="22" y="164">tweets(user_id)</text>
+    <text class="note" x="22" y="189">tweets(created_at DESC)</text>
+    <text class="note" x="22" y="214">tweets(user_id, created_at DESC)</text>
+    <text class="note" x="22" y="239">tweets USING GIN(content_tsv)</text>
+  </g>
+
+  <g transform="translate(80 840)">
+    <rect class="key-pill" width="28" height="18" rx="9" />
+    <text class="key" x="7" y="13">PK</text>
+    <text class="legend-text" x="38" y="14">Primary key</text>
+
+    <rect class="fk-pill" x="150" width="28" height="18" rx="9" />
+    <text class="key" x="157" y="13">FK</text>
+    <text class="legend-text" x="188" y="14">Foreign key</text>
+
+    <rect class="constraint-pill" x="305" width="28" height="18" rx="9" />
+    <text class="key" x="309" y="13">CK</text>
+    <text class="legend-text" x="343" y="14">Check constraint</text>
+
+    <text class="legend-text" x="505" y="14">All foreign keys use ON DELETE CASCADE</text>
+  </g>
+</svg>

@@ -8,6 +8,21 @@ servers:
   - url: http://localhost:8080
     description: Development server
 
+security:
+  - bearerAuth: []
+    identityToken: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    identityToken:
+      type: apiKey
+      in: header
+      name: X-ID-Token
+
 paths:
   /search/user:
     get:

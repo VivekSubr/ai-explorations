@@ -5,7 +5,7 @@ The k8s model is as follows
 
 * **Web server** is a Deployment of nginx. It has a service with external-ip and use the kubernetes gateway resource to define URLs it serves as per the openapi spec.
    ** Gateway - HTTP listener on port 80
-   
+
 * **Timeline Service** 
     * Deployment + Service, service listening on port 8080. 
     * HTTPRoute to it's service for everything in read and write apis.
@@ -20,6 +20,9 @@ The k8s model is as follows
 
 * **Notification Service**
     * Deployment + Service, service listening on port 8080. 
+
+* **Cache Syncing Service**
+    * Daemonset, no service - each instance is responsible for syncing it's local cache instance with DB.
 
 ## Web-Server
 An nginx deployment and uses the k8s Gateway resource. The ngnix config should configure routing based on
@@ -237,3 +240,8 @@ And then when tweets come in it should send corresonding notification, acking if
   XGROUP CREATE tweets:events fanout-tweets $ MKSTREAM 
   XREADGROUP GROUP fanout-tweets consumer-name COUNT 100 BLOCK 5000 STREAMS tweets:events >
 ```
+
+Upon recieving notification, the service will send SSE to frontend, frontend responsibility to manage duplicates, flooding ect of SSEs
+
+
+## Cache Syncing Service

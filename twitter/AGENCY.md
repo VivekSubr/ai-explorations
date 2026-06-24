@@ -16,6 +16,9 @@ Details relating to database design.
 * **OBSERVABILITY.md**
 Details relating to observability strategy.
 
+* **AUTH.md**
+Details related to AAA
+
 * **SCALE.md**
 Scaling calculations, and design relating to auto-scaling
 
@@ -44,6 +47,7 @@ Output, create these folders
       - fanout-svc
       - search-svc
       - notification-svc
+      - cache-sync-svc
    * database, folder for all database related code
    * observability, folder for observality resources.
    * utils, folder for common utilities
@@ -88,5 +92,5 @@ For generating this project, do the following, in this order :
 Testing is two levels ->
    * **Unit Tests** for each component, after generating code make sure to generate enough unit tests for 90+ coverage.
 
-   * **Integration Tests**, expounded in TEST_SPAN.md... agent must bring up test environment described in TEST_PLAN.md and run all the tests.
+   * **Integration Tests**, expounded in TEST_PLAN.md... agent must bring up test environment described in TEST_PLAN.md and run all the tests.
 

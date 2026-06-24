@@ -27,7 +27,7 @@ CREATE TABLE users (
 -- 2. Profile pictures table
 CREATE TABLE profile_pictures (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, #UNIQUE enforces 1:1 with users
     image_data BYTEA NOT NULL,
     mime_type VARCHAR(50) NOT NULL,
     file_size INTEGER,
@@ -115,7 +115,7 @@ To support this, we have the following structures in the cache
 
     So, adding tweet becomes
     1. Store a tweet ```HSET tweet-$tweet_id user_id $user_id text "My first tweet"```
-    2. Add to user  ```ZADD user-$user_id-tweets $TIMESTAMP $user_id```
+    2. Add to user   ```ZADD user-$user_id-tweets $TIMESTAMP $user_id```
 
     When adding to ZSET, fan out service will also XADD to a stream, 
     ```XADD tweets:events * user_id $id tweet_id $tweet_id timestamp $TIMESTAMP content "..."```
@@ -154,6 +154,37 @@ To support this, we have the following structures in the cache
       ```
 
 ### Cache Syncing
+All the cache instances need to be **synced**, so that we get convergence of all the timeline and notification services which depend on the caches.
+
+Postgres should remain the source of truth. Redis should be treated as a derived cache that can be rebuilt from Postgres if it becomes stale or is lost.
+
+We can not rely on direct dual-writes from the API like "write Postgres, then write Redis" as the only sync mechanism. If Postgres commits but the Redis write fails, the cache becomes inconsistent.
+
+For cache syncing, we can maintain a seperate 'outbox' tables,
+```
+    CREATE TABLE cache_outbox (
+        id BIGSERIAL PRIMARY KEY,
+        event_type VARCHAR(50) NOT NULL,
+        aggregate_type VARCHAR(50) NOT NULL,
+        aggregate_id BIGINT NOT NULL,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP WITH TIME ZONE
+    );
+
+    CREATE INDEX idx_cache_outbox_unprocessed ON cache_outbox(id) WHERE processed_at IS NULL;
+```
+
+And insert into tweets table should become a transaction
+```
+    BEGIN;
+        INSERT INTO tweets (user_id, content) VALUES (42, 'hello world');
+        INSERT INTO cache_outbox (event_type, aggregate_id, payload)
+            VALUES ('tweet.created', 42, '{"tweet_id": 99, "content": "hello world"}');
+    COMMIT;
+```
+
+Cache sync worker is supposed to check cache_outbox for tweets not in cache, and update cache accordingly.
 
 ## Search 
 The tweets table should have tsvector 
@@ -218,3 +249,5 @@ Deploy redis, same, as a cluster daemonset, using Redis Cluster.
     * Deployment of redis cluster operator
     * Service for redis, port 8080
     * Service for operator, port 8080
+
+### Resiliency 

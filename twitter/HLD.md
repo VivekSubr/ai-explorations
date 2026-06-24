@@ -32,6 +32,7 @@
 * **Fan Out Service**  : Main user of the write api, responsible for writting new tweets to cache/DB, in such a way that they fan out fast.
 * **Search Service** : Responsible for responding to search queries using search api
 * **Notification Service** : Sends out notifications of popular posts by accounts followed by user.
+* **Cache Syncing Service**: Response for eventual consistency - syncing cache to DB
 ---
 
 * **Cache**

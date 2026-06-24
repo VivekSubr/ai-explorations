@@ -1,0 +1,100 @@
+openapi: 3.0.0
+info:
+	title: Twitter Session API
+	version: 1.0.0
+	description: API for user registration and session management
+
+servers:
+	- url: http://localhost:8080
+		description: Development server
+
+components:
+	schemas:
+		RegisterRequest:
+			type: object
+			properties:
+				user_name:
+					type: string
+				password:
+					type: string
+				bio:
+					type: string
+			required:
+				- user_name
+				- password
+				- bio
+		LoginRequest:
+			type: object
+			properties:
+				password:
+					type: string
+					format: byte
+					description: Base64-encoded password
+			required:
+				- password
+		LoginResponse:
+			type: object
+			properties:
+				jwt_token:
+					type: string
+				id_token:
+					type: string
+			required:
+				- jwt_token
+				- id_token
+
+paths:
+	/register:
+		post:
+			summary: Register a new user
+			requestBody:
+				required: true
+				content:
+					application/json:
+						schema:
+							$ref: '#/components/schemas/RegisterRequest'
+			responses:
+				'200':
+					description: Success
+				'422':
+					description: Bad data
+
+	/login:
+		post:
+			summary: Log in a user
+			parameters:
+				- name: userid
+					in: query
+					required: true
+					schema:
+						type: string
+					description: User ID
+			requestBody:
+				required: true
+				content:
+					application/json:
+						schema:
+							$ref: '#/components/schemas/LoginRequest'
+			responses:
+				'200':
+					description: Success
+					content:
+						application/json:
+							schema:
+								$ref: '#/components/schemas/LoginResponse'
+				'404':
+					description: Not found
+
+	/logout:
+		post:
+			summary: Log out a user
+			parameters:
+				- name: id_token
+					in: query
+					required: true
+					schema:
+						type: string
+					description: ID token
+			responses:
+				'200':
+					description: Success
