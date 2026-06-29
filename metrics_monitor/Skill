@@ -1,0 +1,5 @@
+name: generate-metrics-monitor
+description: >
+  Use this skill when the user wants to generate a metrics monitoring system using Kubernetes.
+version: 1.0.0
+location: ~/SKILL.md

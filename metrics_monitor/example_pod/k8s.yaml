@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-otel-pod
+  labels:
+    app: example-otel-pod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: example-otel-pod
+  template:
+    metadata:
+      labels:
+        app: example-otel-pod
+    spec:
+      containers:
+        - name: example-otel-pod
+          image: example-otel-pod:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: example-otel-pod
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: otel-collector:4317
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              value: "true"
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: demo
+            - name: EMIT_INTERVAL
+              value: 2s
+            - name: METRIC_EXPORT_INTERVAL
+              value: 10s
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
