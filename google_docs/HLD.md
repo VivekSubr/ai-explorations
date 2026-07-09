@@ -14,13 +14,13 @@ Generate a MVP of *google docs*, in golang, deploying into kubernetes.
 4. No more than 100 concurrent editors per document.
 5. Documents should be durable and available even if the server restarts.
 
-** Core Entities **
+**Core Entities**
 1. Editor (user)
 2. Document 
 3. Edit
 4. Cursor
 
-** High level design **
+**High level design**
 
 1. Users should be able to create new documents.
 POST /doc?name is required, should return an id.

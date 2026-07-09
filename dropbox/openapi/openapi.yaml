@@ -1,0 +1,647 @@
+openapi: 3.1.0
+info:
+  title: Scalable Object Store API
+  version: 0.1.0
+  description: |
+    API for a Dropbox-like scalable object store. Clients authenticate with a bearer
+    token, manage folders through `/files`, and manage file bytes and metadata
+    through `/file`.
+servers:
+  - url: /
+    description: API root
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Folders
+    description: Folder listing, creation, and deletion.
+  - name: Files
+    description: File download, upload, metadata, and deletion.
+  - name: Uploads
+    description: Resumable upload operations.
+
+paths:
+  /files:
+    get:
+      tags:
+        - Folders
+      operationId: listFolder
+      summary: List folder contents
+      description: Returns a nested JSON listing of files and folders, not file bytes.
+      parameters:
+        - $ref: '#/components/parameters/FolderPath'
+      responses:
+        '200':
+          description: Folder contents returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FolderListing'
+              examples:
+                folderListing:
+                  value:
+                    folderpath: /photos
+                    entries:
+                      - type: file
+                        name: image.jpg
+                        path: /photos/image.jpg
+                        metadata:
+                          filepath: /photos/image.jpg
+                          name: image.jpg
+                          contentType: image/jpeg
+                          contentLength: 532112
+                          etag: 65f4c7a36f
+                          updatedAt: '2026-07-06T10:20:30Z'
+                      - type: folder
+                        name: trips
+                        path: /photos/trips
+                        children: []
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+        - Folders
+      operationId: createFolder
+      summary: Create a folder
+      description: Creates a folder in the backing NFS/object-store namespace.
+      parameters:
+        - $ref: '#/components/parameters/FolderPath'
+      responses:
+        '200':
+          description: Folder created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folder'
+        '201':
+          description: Folder already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folder'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags:
+        - Folders
+      operationId: deleteFolder
+      summary: Delete a folder
+      description: Deletes an entire folder and its contents.
+      parameters:
+        - $ref: '#/components/parameters/FolderPath'
+      responses:
+        '200':
+          description: Folder deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /file:
+    head:
+      tags:
+        - Files
+      operationId: getFileMetadataHead
+      summary: Get file metadata
+      description: |
+        Returns metadata for a file without returning file bytes. Because HTTP HEAD
+        responses do not include a body, metadata is represented as response headers.
+      parameters:
+        - $ref: '#/components/parameters/FilePath'
+      responses:
+        '200':
+          description: File metadata returned in headers.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Last-Modified:
+              $ref: '#/components/headers/LastModified'
+            X-File-Name:
+              $ref: '#/components/headers/FileName'
+            X-File-Path:
+              $ref: '#/components/headers/FilePath'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      tags:
+        - Files
+      operationId: downloadFile
+      summary: Download file bytes
+      description: |
+        Downloads file bytes. Clients should issue HEAD first to inspect metadata.
+        This operation may return redirects, so clients should follow redirects.
+      parameters:
+        - $ref: '#/components/parameters/FilePath'
+        - $ref: '#/components/parameters/Range'
+      responses:
+        '200':
+          description: File bytes returned.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Partial file bytes returned for a range request.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Range:
+              $ref: '#/components/headers/ContentRange'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '302':
+          $ref: '#/components/responses/Redirect'
+        '307':
+          $ref: '#/components/responses/Redirect'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+        - Files
+        - Uploads
+      operationId: uploadFileOrCreateResumableSession
+      summary: Upload a small file or start a resumable upload
+      description: |
+        Uploads a small file directly when `uploadType` is omitted. Starts a
+        resumable upload session when `uploadType=resumable` is provided.
+      parameters:
+        - $ref: '#/components/parameters/FilePath'
+        - $ref: '#/components/parameters/UploadTypeOptional'
+        - $ref: '#/components/parameters/UploadContentType'
+        - $ref: '#/components/parameters/UploadContentLength'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitiateResumableUploadRequest'
+            example:
+              name: big_video.mp4
+      responses:
+        '200':
+          description: File uploaded or resumable upload session created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            X-Upload-Id:
+              $ref: '#/components/headers/UploadId'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/FileMetadata'
+                  - $ref: '#/components/schemas/ResumableUploadSession'
+        '201':
+          description: File already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileMetadata'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      tags:
+        - Uploads
+      operationId: uploadResumableChunk
+      summary: Upload bytes to a resumable upload session
+      description: |
+        Uploads all file bytes in one request or uploads a 256 KiB-aligned chunk.
+        To query progress after an interrupted upload, send `Content-Range` like
+        `bytes */2000000` to the same upload URI.
+      parameters:
+        - $ref: '#/components/parameters/UploadTypeRequired'
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/ContentLength'
+        - $ref: '#/components/parameters/ContentRange'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Resumable upload completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileMetadata'
+        '308':
+          description: Resume Incomplete. The server has accepted part of the upload.
+          headers:
+            Range:
+              description: Inclusive byte range already persisted by the server.
+              schema:
+                type: string
+              example: bytes=0-262143
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadStatus'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+        - Files
+      operationId: updateFileMetadata
+      summary: Patch file metadata
+      parameters:
+        - $ref: '#/components/parameters/FilePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileMetadataPatch'
+      responses:
+        '200':
+          description: File metadata updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileMetadata'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Files
+      operationId: deleteFile
+      summary: Delete a file
+      parameters:
+        - $ref: '#/components/parameters/FilePath'
+      responses:
+        '200':
+          description: File deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    FolderPath:
+      name: folderpath
+      in: query
+      required: true
+      description: Absolute path to a folder in the user's namespace.
+      schema:
+        type: string
+        minLength: 1
+      example: /photos/trips
+    FilePath:
+      name: filepath
+      in: query
+      required: true
+      description: Absolute path to a file in the user's namespace.
+      schema:
+        type: string
+        minLength: 1
+      example: /photos/image.jpg
+    Range:
+      name: Range
+      in: header
+      required: false
+      description: HTTP byte range for resumable downloads.
+      schema:
+        type: string
+      example: bytes=1048576-
+    UploadTypeOptional:
+      name: uploadType
+      in: query
+      required: false
+      description: Set to `resumable` to initiate a resumable upload session.
+      schema:
+        type: string
+        enum:
+          - resumable
+    UploadTypeRequired:
+      name: uploadType
+      in: query
+      required: true
+      description: Must be `resumable` for resumable upload requests.
+      schema:
+        type: string
+        enum:
+          - resumable
+    UploadId:
+      name: upload_id
+      in: query
+      required: true
+      description: Upload session identifier returned when a resumable upload is initiated.
+      schema:
+        type: string
+      example: xyz123
+    UploadContentType:
+      name: X-Upload-Content-Type
+      in: header
+      required: false
+      description: Final content type of the file being uploaded.
+      schema:
+        type: string
+      example: video/mp4
+    UploadContentLength:
+      name: X-Upload-Content-Length
+      in: header
+      required: false
+      description: Final size of the file being uploaded, in bytes.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      example: 2000000
+    ContentLength:
+      name: Content-Length
+      in: header
+      required: true
+      description: Number of bytes in this upload request.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      example: 262144
+    ContentRange:
+      name: Content-Range
+      in: header
+      required: false
+      description: Byte range for the current chunk or `bytes */<total>` to query progress.
+      schema:
+        type: string
+      examples:
+        chunk:
+          value: bytes 0-262143/2000000
+        query:
+          value: bytes */2000000
+
+  headers:
+    ContentLength:
+      description: File size or response body size, in bytes.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      example: 532112
+    ContentType:
+      description: Media type of the file bytes.
+      schema:
+        type: string
+      example: image/jpeg
+    ContentRange:
+      description: Byte range returned for a partial content response.
+      schema:
+        type: string
+      example: bytes 1048576-2000000/2000000
+    ETag:
+      description: Entity tag for the stored file version.
+      schema:
+        type: string
+      example: 65f4c7a36f
+    LastModified:
+      description: Last modification timestamp for the file.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-07-06T10:20:30Z'
+    FileName:
+      description: File name.
+      schema:
+        type: string
+      example: image.jpg
+    FilePath:
+      description: Absolute path to the file.
+      schema:
+        type: string
+      example: /photos/image.jpg
+    Location:
+      description: Resumable upload session URI.
+      schema:
+        type: string
+        format: uri
+      example: https://example.com/file?uploadType=resumable&upload_id=xyz123
+    UploadId:
+      description: Resumable upload session identifier.
+      schema:
+        type: string
+      example: xyz123
+
+  responses:
+    Forbidden:
+      description: Bearer token is missing, invalid, or not authorized for this path.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: File, folder, or upload session was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Redirect:
+      description: Download should be retried at the URL in the Location header.
+      headers:
+        Location:
+          description: Redirect target for file bytes.
+          schema:
+            type: string
+            format: uri
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RedirectResponse'
+
+  schemas:
+    FolderListing:
+      type: object
+      required:
+        - folderpath
+        - entries
+      properties:
+        folderpath:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileSystemEntry'
+    FileSystemEntry:
+      type: object
+      required:
+        - type
+        - name
+        - path
+      properties:
+        type:
+          type: string
+          enum:
+            - file
+            - folder
+        name:
+          type: string
+        path:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/FileMetadata'
+        children:
+          type: array
+          description: Nested entries. Present for folders.
+          items:
+            $ref: '#/components/schemas/FileSystemEntry'
+    Folder:
+      type: object
+      required:
+        - folderpath
+      properties:
+        folderpath:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    FileMetadata:
+      type: object
+      required:
+        - filepath
+        - name
+      properties:
+        filepath:
+          type: string
+        name:
+          type: string
+        contentType:
+          type: string
+          example: image/jpeg
+        contentLength:
+          type: integer
+          format: int64
+          minimum: 0
+        etag:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        customMetadata:
+          type: object
+          additionalProperties:
+            type: string
+    FileMetadataPatch:
+      type: object
+      description: Metadata fields to update for an existing file.
+      properties:
+        contentType:
+          type: string
+        customMetadata:
+          type: object
+          additionalProperties:
+            type: string
+    InitiateResumableUploadRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Display name or basename of the file.
+        metadata:
+          $ref: '#/components/schemas/FileMetadataPatch'
+    ResumableUploadSession:
+      type: object
+      required:
+        - uploadId
+        - uploadUrl
+      properties:
+        uploadId:
+          type: string
+        uploadUrl:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+    UploadStatus:
+      type: object
+      required:
+        - uploadId
+        - receivedBytes
+      properties:
+        uploadId:
+          type: string
+        receivedBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        totalBytes:
+          type: integer
+          format: int64
+          minimum: 0
+    DeleteResult:
+      type: object
+      required:
+        - deleted
+      properties:
+        deleted:
+          type: boolean
+        path:
+          type: string
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+    RedirectResponse:
+      type: object
+      required:
+        - location
+      properties:
+        location:
+          type: string
+          format: uri
