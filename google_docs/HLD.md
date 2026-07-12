@@ -1,14 +1,15 @@
 Generate a MVP of *google docs*, in golang, deploying into kubernetes. 
 
-** Core functional Requirements **
+# Requirements
+
+**Core functional Requirements**
 1. Users should be able to create new documents.
 2. Multiple users should be able to edit the same document concurrently.
 3. Users should be able to view each other's changes in real-time.
 4. Users should be able to see the cursor position and presence of other users.
 
-** Core non-functional requirements **
+**Core non-functional requirements**
 1. Documents should be eventually consistent (i.e. all users should eventually see the same document state).
-
 2. Updates should be low latency (< 100ms).
 3. The system should scale to millions of concurrent users across billions of documents.
 4. No more than 100 concurrent editors per document.
@@ -38,3 +39,6 @@ Each edit should go to backend and come to every client as a Server Side Event
 
 4. Users should be able to see the cursor position and presence of other users.
 Something along the lines of https://www.canva.dev/blog/engineering/realtime-mouse-pointers/
+
+
+## Components 

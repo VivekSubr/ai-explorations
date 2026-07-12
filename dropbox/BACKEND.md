@@ -46,5 +46,9 @@ The cluster will have a pool of PersistentVolumes. Each server mounts a sub-set 
 2. Server pod updates files table and fsyncs to NFS under user folder.
 
 **Download file**
+1. Gateway CH to correct server pod.
+2. Server pod sends file or file chunks from NFS to api
 
 **Delete file**
+1. Gateway CH to correct server pod.
+2. Server pod deletes on NFS
