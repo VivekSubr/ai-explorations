@@ -44,114 +44,251 @@ Client connect, after SSO, to load balancers which distribute to backend server 
 ## API
 Our api mimicks exisiting apis for cloud services like Azure Blob. Annother option is have the client use sftp, but that doesn't scale.
 
-First, list out the **nouns** and what **verbs** act on them.
-* file - get, post, put, head, delete
-* user - get, post, put, delete
+All APIs have a bearer token header for auth and identifying the user.
 
-All these apis will have bearer token header for auth and identifying user.
+```http
+Authorization: Bearer <token>
+```
 
-* GET /files
-  args:   folderpath
-  return: 200 OK, 403 forbidden, 404 not found
-          nested json array of files and folders (NOT the complete files)
+### Nouns And Verbs
 
-* HEAD /file
-  args:   filepath
-  return: 200 OK, 403 forbidden, 404 not found
-          returns json of file metadata
+| Noun | Verbs |
+| --- | --- |
+| `file` | `GET`, `POST`, `PUT`, `HEAD`, `PATCH`, `DELETE` |
+| `files` | `GET`, `POST`, `DELETE` |
+| `user` | `GET`, `POST`, `DELETE` |
 
-* GET /file
-  args:   filepath
-  return: 200 OK, 403 forbidden, 404 not found
-          returns file bytes
+### Endpoint Summary
 
-  Since files can be huge, made GET only return file bytes, so it must be paired with a HEAD first. This api also may return *redirects*, so curl must be done with -L. Example usage:
-  ```
-    curl -L -C - -o bigfile.zip \
-        --progress-bar --connect-timeout 10 --max-time 3600 --retry 3 --retry-delay 5 \
-        "https://example.com/file?path"
-  ```
+| Method | Path | Args | Success | Errors | Description |
+| --- | --- | --- | --- | --- | --- |
+| `GET` | `/files` | `folderpath` | `200 OK` | `403`, `404` | Return a nested JSON array of files and folders, not complete file bytes. |
+| `HEAD` | `/file` | `filepath` | `200 OK` | `403`, `404` | Return file metadata. |
+| `GET` | `/file` | `filepath` | `200 OK` | `403`, `404` | Return file bytes. |
+| `POST` | `/files` | `folderpath` | `200 OK`, `201 already exist` | `403` | Create a folder in NFS. |
+| `POST` | `/file` | `filepath` | `200 OK`, `201 already exist` | `403` | Upload a file or initiate a resumable upload. |
+| `PUT` | `/file` | `uploadType`, `upload_id` | `200 OK`, `308 Resume Incomplete` | `403`, `404` | Upload bytes to a resumable upload session. |
+| `PATCH` | `/file` | `filepath` | `200 OK` | `403`, `404` | Patch file metadata. |
+| `DELETE` | `/files` | `folderpath` | `200 OK` | `403`, `404` | Delete an entire folder. |
+| `DELETE` | `/file` | `filepath` | `200 OK` | `403`, `404` | Delete a file. |
+| `GET` | `/user/<user-email>` | `user-email` | `200 OK` | `404` | Return user details. |
+| `POST` | `/user` | none | `200 OK` | `403` | Create a user in DB and assign the user to a pod. |
+| `DELETE` | `/user/<user-email>` | `user-email` | `200 OK` | `403`, `404` | Delete a user in DB and remove the user from NFS. |
+| `POST` | `/user/share?<user-email>` | `user-email` | `200 OK`, `207 partial failure` | `404 user NF` | Share folders with other users. |
 
-* POST /files
-  args:   folderpath
-  return: 200 OK, 201 already exist, 403 forbidden
-          This api creates folder in NFS.
+### List Folder
 
-* POST /file 
-  args:    filepath
-  headers: file metadata, content-type header 
-  return:  200 OK, 201 already exist, 403 forbidden
-           
-  If it's a small file, <5MB, single post upload, something like this 
-  ```
-  curl -X POST "https://example.com/file?<filepath>" \
-    -H "Authorization: Bearer $TOKEN" -H "Content-Type: image/jpeg" \
-    --data-binary @photo.jpg
-  ```
+```http
+GET /files?folderpath=<folderpath>
+```
 
-  If the file is large, clients should use *resumable uploads*
+Returns `200 OK`, `403 forbidden`, or `404 not found`.
 
-  ```
-  # Step 1: initiate session, get the session URI back in the Location header
-  curl -i -X POST "https://www.example.com/file?uploadType=resumable&&filepath=<path>" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json; charset=UTF-8" \
-    -H "X-Upload-Content-Type: video/mp4" \
-    -H "X-Upload-Content-Length: 2000000" \
-    -d '{"name":"big_video.mp4"}'
-  # this will return an upload id
+The response is a nested JSON array of files and folders, not the complete files.
 
-  # Step 2a: upload the whole thing in one shot
-  curl -X PUT "https://www.example.com/file?uploadType=resumable&upload_id=xyz123" \
-    -H "Content-Length: 2000000" \
-    --data-binary @big_video.mp4
+### Get File Metadata
 
-  # Step 2b: OR upload in 256KB-aligned chunks (for progress bars / flaky links)
-  curl -X PUT "https://www.example.com/file?uploadType=resumable&upload_id=xyz123" \
-    -H "Content-Length: 262144" \
-    -H "Content-Range: bytes 0-262143/2000000" \
-    --data-binary @chunk1.bin
-  # a dropped chunk returns 308 Resume Incomplete; query the same URI with
-  # Content-Range: bytes */2000000 to find how many bytes the server already has
-  ```
+```http
+HEAD /file?filepath=<filepath>
+```
 
-* PATCH /file
-  args:    filepath
-  headers: file metadata, content-type header 
-  return:  200 OK, 403 forbidden, 404 NF
+Returns `200 OK`, `403 forbidden`, or `404 not found`.
 
-  Patches file meta-data
+The response returns file metadata.
 
-* DELETE /files
-  args:   folderpath
-  return: 200 OK, 403 forbidden, 404 NF
+### Download File
 
-  Delete entire folder
+```http
+GET /file?filepath=<filepath>
+```
 
-* DELETE /file
-  args:   filepath
-  return: 200 OK, 403 forbidden, 404 NF
+Returns `200 OK`, `403 forbidden`, or `404 not found`.
 
-  Delete file.
+The response returns file bytes.
 
-* GET /user<user-email>
-  return: 200 OK, 404 NF
-  data: json of user details
+Since files can be huge, `GET /file` only returns file bytes, so it must be paired with a `HEAD /file` request first. This API may also return redirects, so curl must be done with `-L`.
 
-* POST /user
-  return: json of user details
+Example usage:
 
-  results in user being created in DB and assigned to pod.
+```bash
+curl -L -C - -o bigfile.zip \
+  --progress-bar --connect-timeout 10 --max-time 3600 --retry 3 --retry-delay 5 \
+  "https://example.com/file?path"
+```
 
-* DELETE /user<user-email>
-  return: 200 OK, 403 forbidden, 404 NF
+### Create Folder
 
-  results in user being deleted in DB and removed from NFS.
+```http
+POST /files?folderpath=<folderpath>
+```
 
-* POST /user/share?<user-email>
-  args: user-email
-  data: array of sharing [{email, folderpath}]
-  return: 200 OK, 404 user NF, 207 partial failure, with return json of [{email, folderpath, reject_reason}]
+Returns `200 OK`, `201 already exist`, or `403 forbidden`.
+
+This API creates a folder in NFS.
+
+### Upload File
+
+```http
+POST /file?filepath=<filepath>
+```
+
+Headers:
+
+| Header | Description |
+| --- | --- |
+| `Content-Type` | File content type. |
+| file metadata headers | File metadata used by the server. |
+
+Returns `200 OK`, `201 already exist`, or `403 forbidden`.
+
+If it is a small file, less than 5MB, use a single POST upload:
+
+```bash
+curl -X POST "https://example.com/file?<filepath>" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg
+```
+
+If the file is large, clients should use resumable uploads.
+
+#### Resumable Uploads
+
+Step 1: initiate a session and get the session URI back in the `Location` header.
+
+```bash
+curl -i -X POST "https://www.example.com/file?uploadType=resumable&&filepath=<path>" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json; charset=UTF-8" \
+  -H "X-Upload-Content-Type: video/mp4" \
+  -H "X-Upload-Content-Length: 2000000" \
+  -d '{"name":"big_video.mp4"}'
+```
+
+This returns an upload ID.
+
+Step 2a: upload the whole file in one shot.
+
+```bash
+curl -X PUT "https://www.example.com/file?uploadType=resumable&upload_id=xyz123" \
+  -H "Content-Length: 2000000" \
+  --data-binary @big_video.mp4
+```
+
+Step 2b: or upload in 256KB-aligned chunks for progress bars and flaky links.
+
+```bash
+curl -X PUT "https://www.example.com/file?uploadType=resumable&upload_id=xyz123" \
+  -H "Content-Length: 262144" \
+  -H "Content-Range: bytes 0-262143/2000000" \
+  --data-binary @chunk1.bin
+```
+
+A dropped chunk returns `308 Resume Incomplete`. Query the same URI with `Content-Range: bytes */2000000` to find how many bytes the server already has.
+
+### Patch File Metadata
+
+```http
+PATCH /file?filepath=<filepath>
+```
+
+Headers:
+
+| Header | Description |
+| --- | --- |
+| `Content-Type` | Metadata request body content type. |
+| file metadata headers | Metadata fields to patch. |
+
+Returns `200 OK`, `403 forbidden`, or `404 NF`.
+
+Patches file metadata.
+
+### Delete Folder
+
+```http
+DELETE /files?folderpath=<folderpath>
+```
+
+Returns `200 OK`, `403 forbidden`, or `404 NF`.
+
+Deletes the entire folder.
+
+### Delete File
+
+```http
+DELETE /file?filepath=<filepath>
+```
+
+Returns `200 OK`, `403 forbidden`, or `404 NF`.
+
+Deletes the file.
+
+### Get User
+
+```http
+GET /user/<user-email>
+```
+
+Returns `200 OK` or `404 NF`.
+
+Response data is JSON user details.
+
+### Create User
+
+```http
+POST /user
+```
+
+Returns JSON user details.
+
+Creates the user in DB and assigns the user to a pod.
+
+### Delete User
+
+```http
+DELETE /user/<user-email>
+```
+
+Returns `200 OK`, `403 forbidden`, or `404 NF`.
+
+Deletes the user in DB and removes the user from NFS.
+
+### Share Folders
+
+```http
+POST /user/share?<user-email>
+```
+
+Args:
+
+| Arg | Description |
+| --- | --- |
+| `user-email` | Source user email. |
+
+Request data:
+
+```json
+[
+  {
+    "email": "target@example.com",
+    "folderpath": "/photos"
+  }
+]
+```
+
+Returns `200 OK`, `404 user NF`, or `207 partial failure`.
+
+For partial failures, the response is JSON shaped like:
+
+```json
+[
+  {
+    "email": "target@example.com",
+    "folderpath": "/photos",
+    "reject_reason": "user not found"
+  }
+]
+```
 
 
 ## Database 
