@@ -148,22 +148,31 @@ All these apis will have bearer token header for auth and identifying user.
 
   results in user being deleted in DB and removed from NFS.
 
+* POST /user/share?<user-email>
+  args: user-email
+  data: array of sharing [{email, folderpath}]
+  return: 200 OK, 404 user NF, 207 partial failure, with return json of [{email, folderpath, reject_reason}]
+
+
 ## Database 
 Have just two tables - **User** and **Files**
 
 **User**
 The user table contains details about users. 
 
+```
 CREATE TABLE USERS(
   id      BIGSERIAL PRIMARY KEY,
   name    TEXT NOT NULL,
   email   VARCHAR(255) UNIQUE
   volume  VARCHAR(255) UNIQUE #name of volume where user folder is created
 )
+```
 
 **Files** 
 The files table contains meta-data for all files, with users as key
 
+```
 CREATE TABLE FILES(
   id          BIGSERIAL PRIMARY KEY,
   user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -176,3 +185,4 @@ CREATE TABLE FILES(
 )
 
 CREATE INDEX idx_files_users ON files(user_id);
+```

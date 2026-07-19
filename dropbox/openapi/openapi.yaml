@@ -4,8 +4,8 @@ info:
   version: 0.1.0
   description: |
     API for a Dropbox-like scalable object store. Clients authenticate with a bearer
-    token, manage folders through `/files`, and manage file bytes and metadata
-    through `/file`.
+    token, manage folders through `/files`, manage file bytes and metadata
+    through `/file`, and manage users and folder sharing through `/user`.
 servers:
   - url: /
     description: API root
@@ -20,6 +20,8 @@ tags:
     description: File download, upload, metadata, and deletion.
   - name: Uploads
     description: Resumable upload operations.
+  - name: Users
+    description: User lookup, creation, deletion, and sharing.
 
 paths:
   /files:
@@ -53,6 +55,7 @@ paths:
                           contentLength: 532112
                           etag: 65f4c7a36f
                           updatedAt: '2026-07-06T10:20:30Z'
+                          permission: owner
                       - type: folder
                         name: trips
                         path: /photos/trips
@@ -131,6 +134,8 @@ paths:
               $ref: '#/components/headers/FileName'
             X-File-Path:
               $ref: '#/components/headers/FilePath'
+            X-File-Permission:
+              $ref: '#/components/headers/FilePermission'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -318,6 +323,114 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /user:
+    post:
+      tags:
+        - Users
+      operationId: createUser
+      summary: Create a user
+      description: Creates a user database record and assigns the user to a storage volume.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+            example:
+              name: Ada Lovelace
+              email: ada@example.com
+      responses:
+        '200':
+          description: User created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /user/{userEmail}:
+    get:
+      tags:
+        - Users
+      operationId: getUser
+      summary: Get user details
+      description: Returns user details for the requested email address.
+      parameters:
+        - $ref: '#/components/parameters/UserEmailPath'
+      responses:
+        '200':
+          description: User details returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Users
+      operationId: deleteUser
+      summary: Delete a user
+      description: Deletes the user database record and removes the user's NFS folder.
+      parameters:
+        - $ref: '#/components/parameters/UserEmailPath'
+      responses:
+        '200':
+          description: User deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /user/share:
+    post:
+      tags:
+        - Users
+      operationId: shareFolders
+      summary: Share folders with users
+      description: Shares one or more folders from the source user namespace with target users.
+      parameters:
+        - $ref: '#/components/parameters/UserEmailQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ShareRequest'
+            example:
+              - email: grace@example.com
+                folderpath: /photos/trips
+              - email: alan@example.com
+                folderpath: /docs
+      responses:
+        '200':
+          description: All requested folders were shared.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShareResult'
+        '207':
+          description: Some share operations failed while others may have succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShareResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -344,6 +457,24 @@ components:
         type: string
         minLength: 1
       example: /photos/image.jpg
+    UserEmailPath:
+      name: userEmail
+      in: path
+      required: true
+      description: User email address.
+      schema:
+        type: string
+        format: email
+      example: ada@example.com
+    UserEmailQuery:
+      name: user-email
+      in: query
+      required: true
+      description: Source user email address whose folders are being shared.
+      schema:
+        type: string
+        format: email
+      example: ada@example.com
     Range:
       name: Range
       in: header
@@ -458,6 +589,11 @@ components:
       schema:
         type: string
       example: /photos/image.jpg
+    FilePermission:
+      description: Permission metadata stored for the file.
+      schema:
+        type: string
+      example: owner
     Location:
       description: Resumable upload session URI.
       schema:
@@ -567,6 +703,10 @@ components:
         updatedAt:
           type: string
           format: date-time
+        permission:
+          type: string
+          description: Permission metadata stored with the file record.
+          example: owner
         customMetadata:
           type: object
           additionalProperties:
@@ -577,10 +717,71 @@ components:
       properties:
         contentType:
           type: string
+        permission:
+          type: string
         customMetadata:
           type: object
           additionalProperties:
             type: string
+    User:
+      type: object
+      required:
+        - id
+        - name
+        - email
+        - volume
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        volume:
+          type: string
+          description: Name of the storage volume where the user's root folder is created.
+    CreateUserRequest:
+      type: object
+      required:
+        - name
+        - email
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+    ShareRequest:
+      type: object
+      required:
+        - email
+        - folderpath
+      properties:
+        email:
+          type: string
+          format: email
+          description: Target user email address.
+        folderpath:
+          type: string
+          description: Folder path to share from the source user's namespace.
+          example: /photos/trips
+    ShareResult:
+      type: object
+      required:
+        - email
+        - folderpath
+      properties:
+        email:
+          type: string
+          format: email
+        folderpath:
+          type: string
+          example: /photos/trips
+        reject_reason:
+          type: string
+          description: Present when the share request was rejected.
     InitiateResumableUploadRequest:
       type: object
       properties:

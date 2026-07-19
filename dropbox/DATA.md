@@ -37,3 +37,42 @@ And only update this after all file chunks are fully written. Bad Checksum shoul
 
 ## Replication 
 The NFS backend should handle replication. 
+
+## Access Control
+We need finer access control on folders, since dropbox also has a *share api*... so, users should not be able to share unconditionally.
+
+Access control is folder level, so we need a table for folders.
+```
+CREATE TABLE FOLDERS (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  parent_id   BIGINT REFERENCES folders(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  created_at  TIMESTAMP,
+  updated_at  TIMESTAMP,
+  UNIQUE(user_id, path)
+);
+
+ALTER TABLE FILES
+  ADD COLUMN folder_id BIGINT REFERENCES folders(id) ON DELETE CASCADE;
+```
+
+and a table for ACLs
+```
+CREATE TABLE FOLDER_ACL (
+  id                 BIGSERIAL PRIMARY KEY,
+  folder_id          BIGINT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+  principal_user_id  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role               VARCHAR(32) NOT NULL, -- viewer | editor | owner
+  can_share          BOOLEAN NOT NULL DEFAULT false,
+  created_by         BIGINT NOT NULL REFERENCES users(id),
+  created_at         TIMESTAMP,
+  expires_at         TIMESTAMP,
+  revoked_at         TIMESTAMP,
+  UNIQUE(folder_id, principal_user_id)
+);
+
+CREATE INDEX idx_folder_acl_principal ON folder_acl(principal_user_id);
+CREATE INDEX idx_folder_acl_folder ON folder_acl(folder_id);
+```
