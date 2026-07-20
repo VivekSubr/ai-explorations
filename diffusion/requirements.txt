@@ -1,0 +1,6 @@
+diffusers
+numpy
+onnxruntime
+optimum[onnxruntime]
+pillow
+transformers

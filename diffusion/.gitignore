@@ -1,0 +1,12 @@
+.venv/
+.venv-win/
+__pycache__/
+.pytest_cache/
+
+output.png
+out.png
+video/output.mp4
+test-output/
+
+.env
+.env.*

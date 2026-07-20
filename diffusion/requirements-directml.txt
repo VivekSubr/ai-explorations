@@ -1,0 +1,11 @@
+accelerate==1.14.0
+diffusers==0.31.0
+imageio[ffmpeg]==2.37.3
+numpy==2.5.1
+onnxruntime-directml==1.24.4
+optimum==2.2.0
+pillow==12.3.0
+torch==2.4.1
+torchvision==0.19.1
+torch-directml==0.2.5.dev240914
+transformers==4.46.3
