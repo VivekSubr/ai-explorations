@@ -1,5 +1,7 @@
 This project is, basically, a scalable object store + load balancer.
 
+![High level design](high_level_design.svg)
+
 # Goals
 **Core functional Requirements**
 1. Users should be able to upload a file from any device
@@ -42,6 +44,9 @@ Client connect, after SSO, to load balancers which distribute to backend server 
 * Object Store (Just node NFS storage)
 
 ## API
+
+![API design](api_design.svg)
+
 Our api mimicks exisiting apis for cloud services like Azure Blob. Annother option is have the client use sftp, but that doesn't scale.
 
 All APIs have a bearer token header for auth and identifying the user.
